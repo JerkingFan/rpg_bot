@@ -1,0 +1,3 @@
+# Для тестов и разработки
+-r requirements.txt
+pytest>=8.0.0

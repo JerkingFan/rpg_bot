@@ -1,0 +1,26 @@
+# виртуальное окружение
+.venv/
+venv/
+env/
+
+# секреты и БД
+.env
+*.db
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# кэш картинок / LaTeX
+cache/
+
+# macOS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
