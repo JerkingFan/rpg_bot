@@ -1,5 +1,6 @@
 aiogram>=3.23.0
-SQLAlchemy>=2.0.35
+sqlalchemy>=2.0.35
+greenlet>=3.0.0
 aiosqlite>=0.20.0
 APScheduler>=3.10.4
 python-dotenv>=1.0.1
