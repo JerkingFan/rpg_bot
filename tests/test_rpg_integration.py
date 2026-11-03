@@ -13,6 +13,7 @@ from services.rpg import (
     complete_task,
     ensure_rpg_defaults,
     get_daily_quest,
+    map_data,
     register_wrong_attempt,
     start_boss,
 )
@@ -125,6 +126,27 @@ class RpgLoopTests(unittest.IsolatedAsyncioTestCase):
             )).scalars().all()
             self.assertEqual(user.streak, 6)
             self.assertTrue(all(row.quantity == 0 for row in inv))
+
+    async def test_map_pagination_shows_every_topic(self):
+        async with self.session_factory() as s:
+            for i in range(24):
+                s.add(Topic(
+                    title=f"Тема {i + 2}",
+                    is_active=False,
+                    order_index=i + 2,
+                ))
+            await s.commit()
+
+        seen_ids = set()
+        async with self.session_factory() as s:
+            user = await s.get(User, self.user_id)
+            first = await map_data(s, user, per_page=10)
+            self.assertEqual(first["total"], 25)
+            self.assertEqual(first["pages"], 3)
+            for page in range(first["pages"]):
+                data = await map_data(s, user, page=page, per_page=10)
+                seen_ids.update(row["id"] for row in data["rows"])
+        self.assertEqual(len(seen_ids), 25)
 
     async def test_first_boss_win_gives_full_reward(self):
         async with self.session_factory() as s:

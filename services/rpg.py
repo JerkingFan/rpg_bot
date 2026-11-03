@@ -665,12 +665,18 @@ async def hero_card(session: AsyncSession, user: User) -> str:
     return "\n".join(lines)
 
 
-async def map_data(session: AsyncSession, user: User, limit: int = 9) -> list[dict]:
+async def map_data(
+    session: AsyncSession,
+    user: User,
+    page: int | None = None,
+    per_page: int = 10,
+) -> dict:
+    """Постраничная карта: все темы доступны, а не только окно вокруг текущей."""
     topics = list((await session.execute(
         select(Topic).order_by(Topic.order_index, Topic.id)
     )).scalars().all())
     if not topics:
-        return []
+        return {"rows": [], "page": 0, "pages": 1, "total": 0}
 
     current_idx = 0
     if user.current_topic_id:
@@ -679,8 +685,13 @@ async def map_data(session: AsyncSession, user: User, limit: int = 9) -> list[di
                 current_idx = i
                 break
 
-    start = max(0, current_idx - 2)
-    chunk = topics[start:start + limit]
+    total = len(topics)
+    pages = max(1, (total + per_page - 1) // per_page)
+    if page is None:
+        page = current_idx // per_page
+    page = max(0, min(page, pages - 1))
+
+    chunk = topics[page * per_page:(page + 1) * per_page]
 
     progress_rows = list((await session.execute(
         select(TopicProgress).where(TopicProgress.user_id == user.id)
@@ -703,14 +714,19 @@ async def map_data(session: AsyncSession, user: User, limit: int = 9) -> list[di
             "id": t.id, "title": t.title, "emoji": t.emoji or "📚",
             "mastery": mastery, "status": status,
         })
-    return result
+    return {"rows": result, "page": page, "pages": pages, "total": total}
 
 
-def map_text(rows: list[dict]) -> str:
+def map_text(data: dict) -> str:
+    rows = data.get("rows") or []
     if not rows:
         return "🗺 Карта пуста. Учитель ещё не создал темы."
 
-    lines = ["🗺 <b>Карта знаний</b>\n"]
+    lines = [
+        "🗺 <b>Карта знаний</b>",
+        f"📚 Всего тем: <b>{data['total']}</b> · "
+        f"страница <b>{data['page'] + 1}/{data['pages']}</b>\n",
+    ]
     for row in rows:
         mark = {
             "current": "📍",

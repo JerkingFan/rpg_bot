@@ -159,10 +159,33 @@ async def cb_menu_map(callback: CallbackQuery):
         if not user:
             await callback.answer("Сначала /start", show_alert=True)
             return
-        rows = await map_data(session, user)
-        text = map_text(rows)
+        data = await map_data(session, user)
+        text = map_text(data)
         await session.commit()
-    await callback.message.edit_text(text, reply_markup=map_kb(), parse_mode="HTML")
+    await callback.message.edit_text(
+        text, reply_markup=map_kb(data["page"], data["pages"]), parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("map:page:"))
+async def cb_map_page(callback: CallbackQuery):
+    try:
+        page = int(callback.data.split(":")[2])
+    except (IndexError, ValueError):
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    async with async_session() as session:
+        user = await _get_user(session, callback.from_user.id)
+        if not user:
+            await callback.answer("Сначала /start", show_alert=True)
+            return
+        data = await map_data(session, user, page=page)
+        text = map_text(data)
+        await session.commit()
+    await callback.message.edit_text(
+        text, reply_markup=map_kb(data["page"], data["pages"]), parse_mode="HTML",
+    )
     await callback.answer()
 
 
@@ -554,10 +577,12 @@ async def cmd_map(message: Message):
         if not user:
             await message.answer("Сначала /start")
             return
-        rows = await map_data(session, user)
-        text = map_text(rows)
+        data = await map_data(session, user)
+        text = map_text(data)
         await session.commit()
-    await message.answer(text, reply_markup=map_kb(), parse_mode="HTML")
+    await message.answer(
+        text, reply_markup=map_kb(data["page"], data["pages"]), parse_mode="HTML",
+    )
 
 
 @router.message(Command("shop"))

@@ -135,6 +135,32 @@ def topic_detail_kb(topic_id: int, is_active: bool) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+TASKS_PER_PAGE = 10
+
+
+def topic_tasks_kb(topic_id: int, page: int = 0, pages: int = 1) -> InlineKeyboardMarkup:
+    """Постраничный список заданий темы, чтобы были видны все задания."""
+    kb = InlineKeyboardBuilder()
+    has_prev = page > 0
+    has_next = page < pages - 1
+    if has_prev:
+        kb.button(text="⬅️", callback_data=f"admin:topic_tasks:{topic_id}:{page - 1}")
+    if pages > 1:
+        kb.button(text=f"{page + 1}/{pages}", callback_data="admin:noop")
+    if has_next:
+        kb.button(text="➡️", callback_data=f"admin:topic_tasks:{topic_id}:{page + 1}")
+    kb.button(text="⬅️ К теме", callback_data=f"admin:topic:{topic_id}")
+    kb.button(text="⬅️ В админ-панель", callback_data="admin:back")
+
+    nav_count = int(has_prev) + int(pages > 1) + int(has_next)
+    layout = []
+    if nav_count:
+        layout.append(nav_count)
+    layout.extend([1, 1])
+    kb.adjust(*layout)
+    return kb.as_markup()
+
+
 def topics_for_student_kb(topics: list[tuple[int, str, bool]], student_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for tid, title, current in topics:

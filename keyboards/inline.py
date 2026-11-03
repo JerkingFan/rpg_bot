@@ -38,12 +38,22 @@ def quest_kb(has_assignments: bool = False) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def map_kb() -> InlineKeyboardMarkup:
+def map_kb(page: int = 0, pages: int = 1) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    has_prev = page > 0
+    has_next = page < pages - 1
+    if has_prev:
+        kb.button(text="⬅️ Назад", callback_data=f"map:page:{page - 1}")
+    if has_next:
+        kb.button(text="➡️ Ещё", callback_data=f"map:page:{page + 1}")
     kb.button(text="🏰 Босс темы", callback_data="menu:boss")
     kb.button(text="🛒 Магазин", callback_data="menu:shop")
     kb.button(text="⬅️ В меню", callback_data="menu:main")
-    kb.adjust(2, 1)
+    layout = []
+    if has_prev or has_next:
+        layout.append(2 if has_prev and has_next else 1)
+    layout.extend([2, 1])
+    kb.adjust(*layout)
     return kb.as_markup()
 
 

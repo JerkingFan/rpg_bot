@@ -17,6 +17,7 @@ from keyboards.admin_kb import (
     admin_main_kb, students_list_kb, students_for_lesson_kb,
     lesson_topic_matches_kb, difficulty_kb, student_detail_kb,
     topics_list_kb, topic_detail_kb, topics_for_student_kb,
+    topic_tasks_kb, TASKS_PER_PAGE,
     back_to_admin_kb, errors_list_kb, error_detail_kb)
 from services.gamification import LEVEL_UP_XP
 from services.similarity import find_similar_topics
@@ -581,23 +582,57 @@ async def cb_push_student(callback: CallbackQuery):
 async def cb_topic_tasks(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         return
-    tid = int(callback.data.split(":")[2])
+    parts = callback.data.split(":")
+    try:
+        tid = int(parts[2])
+        page = int(parts[3]) if len(parts) > 3 else 0
+    except (IndexError, ValueError):
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+
     async with async_session() as session:
         topic = await session.get(Topic, tid)
+        if not topic:
+            await callback.answer("Тема не найдена", show_alert=True)
+            return
+        total = (await session.execute(
+            select(func.count()).select_from(Task).where(Task.topic_id == tid)
+        )).scalar() or 0
+        pages = max(1, (total + TASKS_PER_PAGE - 1) // TASKS_PER_PAGE)
+        page = max(0, min(page, pages - 1))
         tasks = list((await session.execute(
-            select(Task).where(Task.topic_id == tid).order_by(Task.difficulty, Task.id)
+            select(Task)
+            .where(Task.topic_id == tid)
+            .order_by(Task.difficulty, Task.id)
+            .offset(page * TASKS_PER_PAGE)
+            .limit(TASKS_PER_PAGE)
         )).scalars().all())
+
     if not tasks:
         text = f"📝 В теме «{html.escape(topic.title)}» нет заданий."
     else:
-        text = f"📝 <b>«{html.escape(topic.title)}»</b>\n\n"
+        lines = [
+            f"📝 <b>«{html.escape(topic.title)}»</b>",
+            f"Всего заданий: <b>{total}</b> · "
+            f"страница <b>{page + 1}/{pages}</b>\n",
+        ]
+        size = sum(len(line) for line in lines)
         for t in tasks:
             tag = "🎯" if t.target_user_id else f"[{t.difficulty}]"
-            ans = f" → {html.escape(t.answer)}" if t.answer else ""
-            text += f"• {tag} {html.escape(t.text[:80])}{ans}\n"
-        if len(text) > 3800:
-            text = text[:3800] + "\n...(обрезано)"
-    await callback.message.edit_text(text, reply_markup=back_to_admin_kb(), parse_mode="HTML")
+            ans = f" → {html.escape(t.answer[:80])}" if t.answer else ""
+            line = f"<b>#{t.id}</b> {tag} {html.escape(t.text[:200])}{ans}"
+            if size + len(line) > 3800:
+                lines.append("…(обрезано, открой следующую страницу)")
+                break
+            lines.append(line)
+            size += len(line) + 1
+        text = "\n".join(lines)
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=topic_tasks_kb(topic.id, page, pages),
+        parse_mode="HTML",
+    )
     await callback.answer()
 
 
