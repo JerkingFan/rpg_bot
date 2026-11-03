@@ -22,6 +22,7 @@ from keyboards.admin_kb import (
 from services.gamification import LEVEL_UP_XP
 from services.similarity import find_similar_topics
 from services.daily_tasks import assign_daily_tasks
+from services.seeder import seed_missing
 from services.rpg import (
     COINS_BY_DIFFICULTY, XP_BY_DIFFICULTY, award_bonus, complete_task,
     skill_for_topic,
@@ -869,6 +870,38 @@ async def process_import(message: Message, state: FSMContext):
     if stats["errors"]:
         text += "\n⚠️ Ошибки:\n" + "\n".join(f"• {e}" for e in stats["errors"][:5])
     await message.answer(text, reply_markup=admin_main_kb(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "admin:seed_data")
+async def cb_seed_data(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        return
+    await callback.answer("Загружаю темы и задания…")
+    await callback.message.edit_text(
+        "🌱 Загружаю темы и задания из файлов проекта…\n"
+        "Это может занять несколько секунд."
+    )
+    try:
+        stats = await seed_missing(force=True)
+    except Exception as exc:
+        await callback.message.edit_text(
+            f"❌ Ошибка загрузки: {html.escape(str(exc))}",
+            reply_markup=admin_main_kb(),
+        )
+        return
+
+    text = (
+        "✅ <b>Загрузка завершена</b>\n"
+        f"📚 Тем добавлено: <b>{stats['topics_created']}</b>\n"
+        f"📝 Заданий добавлено: <b>{stats['tasks_added']}</b>"
+    )
+    if stats["errors"]:
+        text += "\n⚠️ Ошибки:\n" + "\n".join(
+            f"• {html.escape(e)}" for e in stats["errors"][:5]
+        )
+    await callback.message.edit_text(
+        text, reply_markup=admin_main_kb(), parse_mode="HTML",
+    )
 
 
 # ================== ✅ Ручное засчитывание ответа ==================

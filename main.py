@@ -11,6 +11,7 @@ from database.base import async_session, init_db
 from handlers import common, student, teacher, admin_panel
 from scheduler import setup_scheduler
 from services.rpg import ensure_rpg_defaults
+from services.seeder import seed_if_empty
 
 logging.basicConfig(level=logging.INFO)
 
@@ -28,6 +29,16 @@ COMMANDS = [
 async def main():
     validate_config()
     await init_db()
+    try:
+        seeded = await seed_if_empty()
+    except Exception:
+        logging.exception("Не удалось автоматически наполнить базу темами и заданиями")
+        seeded = None
+    if seeded and (seeded["topics_created"] or seeded["tasks_added"]):
+        logging.info(
+            "База наполнена: тем +%s, заданий +%s",
+            seeded["topics_created"], seeded["tasks_added"],
+        )
     async with async_session() as session:
         await ensure_rpg_defaults(session)
 

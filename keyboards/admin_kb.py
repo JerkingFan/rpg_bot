@@ -8,11 +8,12 @@ def admin_main_kb() -> InlineKeyboardMarkup:
     kb.button(text="📚 Темы", callback_data="admin:topics")
     kb.button(text="➕ Задание в тему", callback_data="admin:add_task")
     kb.button(text="📥 Импорт заданий", callback_data="admin:import_file")
+    kb.button(text="🌱 Загрузить темы и задания", callback_data="admin:seed_data")
     kb.button(text="👨‍🎓 Ученики", callback_data="admin:students")
     kb.button(text="📊 Проверка ответов", callback_data="admin:errors_all")
     kb.button(text="📤 Выдать задания сейчас", callback_data="admin:push_daily")
     kb.button(text="❌ Закрыть", callback_data="admin:close")
-    kb.adjust(1, 2, 2, 2, 1)
+    kb.adjust(1, 2, 2, 2, 1, 1)
     return kb.as_markup()
 
 
@@ -111,6 +112,8 @@ def topics_list_kb(
     if page < pages - 1:
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"admin:topics_page:{page+1}"))
 
+    if total == 0:
+        kb.button(text="🌱 Загрузить темы и задания", callback_data="admin:seed_data")
     kb.button(text="➕ Новая тема", callback_data="admin:new_topic")
     kb.button(text="⬅️ В админ-панель", callback_data="admin:back")
 
@@ -118,7 +121,7 @@ def topics_list_kb(
     layout = [1] * len(chunk)
     if nav:
         layout.append(len(nav))
-    layout.extend([1, 1])
+    layout.extend([1] * (3 if total == 0 else 2))
     kb.adjust(*layout)
 
     return kb.as_markup()

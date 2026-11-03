@@ -95,11 +95,22 @@ def parse_tasks_file(content: str) -> list[dict]:
     return sections
 
 
-async def import_from_file(content: str) -> dict:
+async def import_from_file(content: str, *, skip_existing: bool = False) -> dict:
     sections = parse_tasks_file(content)
     stats = {"topics_created": 0, "tasks_added": 0, "errors": []}
 
     async with async_session() as session:
+        async def _task_exists(topic_id: int, text: str) -> bool:
+            if not skip_existing:
+                return False
+            result = await session.execute(
+                select(Task.id).where(
+                    Task.topic_id == topic_id,
+                    Task.text == text,
+                ).limit(1)
+            )
+            return result.scalar_one_or_none() is not None
+
         for sec in sections:
             if sec["type"] == "topic":
                 r = await session.execute(select(Topic).where(Topic.title == sec["name"]))
@@ -110,6 +121,8 @@ async def import_from_file(content: str) -> dict:
                     await session.flush()
                     stats["topics_created"] += 1
                 for item in sec["tasks"]:
+                    if await _task_exists(topic.id, item["text"]):
+                        continue
                     session.add(Task(
                         topic_id=topic.id,
                         text=item["text"],
@@ -146,6 +159,8 @@ async def import_from_file(content: str) -> dict:
                     topic = await session.get(Topic, user.current_topic_id)
 
                 for item in sec["tasks"]:
+                    if await _task_exists(topic.id, item["text"]):
+                        continue
                     session.add(Task(
                         topic_id=topic.id,
                         text=item["text"],
