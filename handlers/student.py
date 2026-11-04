@@ -348,7 +348,9 @@ async def process_answer(message: Message, state: FSMContext):
             await message.answer(feedback, parse_mode="HTML")
             return
 
-        result = await register_wrong_attempt(session, user, a, task, student_raw)
+        result = await register_wrong_attempt(
+            session, user, a, task, student_raw, max_attempts=1,
+        )
         await session.commit()
 
         if not result["final"]:
@@ -361,7 +363,8 @@ async def process_answer(message: Message, state: FSMContext):
         feedback = (
             "❌ <b>Неверно.</b>\n"
             f"Правильный ответ: <code>{html.escape(task.answer or '—')}</code>\n"
-            "XP не начисляется, но ошибка сохранена — учитель её увидит."
+            "Попытка была одна, поэтому XP не начисляется. "
+            "Ошибка сохранена — учитель её увидит."
         )
         _task_feedback_edit(message, feedback)
         await message.answer(feedback, parse_mode="HTML")

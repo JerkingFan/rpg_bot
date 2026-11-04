@@ -425,7 +425,7 @@ async def register_wrong_attempt(
     task: Task,
     student_answer: str,
     *,
-    max_attempts: int = 2,
+    max_attempts: int = 1,
 ) -> dict:
     ensure_daily_reset(user)
     assignment.attempts += 1

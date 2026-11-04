@@ -7,6 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
 from config import BOT_TOKEN, validate_config
+from database.backup import backup_sqlite_db
 from database.base import async_session, init_db
 from handlers import common, student, teacher, admin_panel
 from scheduler import setup_scheduler
@@ -28,6 +29,10 @@ COMMANDS = [
 
 async def main():
     validate_config()
+    try:
+        backup_sqlite_db()
+    except Exception:
+        logging.exception("Не удалось сделать резервную копию базы")
     await init_db()
     try:
         seeded = await seed_if_empty()

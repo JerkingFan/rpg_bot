@@ -87,7 +87,7 @@ class RpgLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(repeat["earned_xp"], 0)
         self.assertEqual(repeat["earned_coins"], 2)
 
-    async def test_two_wrong_attempts_close_task(self):
+    async def test_one_wrong_attempt_closes_task(self):
         async with self.session_factory() as s:
             user = await s.get(User, self.user_id)
             task = self.tasks[0]
@@ -96,12 +96,12 @@ class RpgLoopTests(unittest.IsolatedAsyncioTestCase):
             await s.commit()
             await s.refresh(a)
 
-            first = await register_wrong_attempt(s, user, a, task, "нет")
-            second = await register_wrong_attempt(s, user, a, task, "нет")
+            result = await register_wrong_attempt(s, user, a, task, "нет")
             await s.commit()
 
-            self.assertFalse(first["final"])
-            self.assertTrue(second["final"])
+            self.assertTrue(result["final"])
+            self.assertEqual(result["attempts"], 1)
+            self.assertEqual(result["remaining"], 0)
             self.assertTrue(a.is_completed)
             self.assertFalse(a.is_correct)
             self.assertEqual(user.xp, 0)

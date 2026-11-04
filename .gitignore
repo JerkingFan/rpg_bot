@@ -6,6 +6,8 @@ env/
 # секреты и БД
 .env
 *.db
+*.db.backup*
+backups/
 *.sqlite
 *.sqlite3
 
