@@ -1,13 +1,18 @@
 import asyncio
 import logging
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 
-from config import BOT_TOKEN, validate_config
-from database.backup import backup_sqlite_db
+from config import BOT_TOKEN, DATA_DIR, DATABASE_URL, validate_config
+from database.backup import (
+    backup_sqlite_db,
+    ensure_db_dir,
+    migrate_legacy_db,
+)
 from database.base import async_session, init_db
 from handlers import common, student, teacher, admin_panel
 from scheduler import setup_scheduler
@@ -29,6 +34,23 @@ COMMANDS = [
 
 async def main():
     validate_config()
+    db_path = ensure_db_dir()
+    logging.info(
+        "База данных: %s",
+        db_path.resolve() if db_path else DATABASE_URL,
+    )
+    if DATA_DIR and db_path is not None:
+        persistent_root = Path(DATA_DIR).resolve()
+        if persistent_root not in db_path.resolve().parents:
+            logging.warning(
+                "База лежит вне постоянного каталога %s — прогресс может "
+                "потеряться при деплое. Укажи DATABASE_URL внутри DATA_DIR.",
+                persistent_root,
+            )
+    try:
+        migrate_legacy_db(db_path)
+    except Exception:
+        logging.exception("Не удалось перенести старую базу в постоянный каталог")
     try:
         backup_sqlite_db()
     except Exception:
