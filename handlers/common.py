@@ -39,6 +39,7 @@ async def cmd_start(message: Message):
         "прокачивай навыки и открывай новые локации.\n\n"
         "<b>Твоя петля:</b> квест дня → задачи → награда → карта → босс темы.\n\n"
         "<b>Команды:</b>\n"
+        "/app — открыть приложение\n"
         "/hero — карточка героя\n"
         "/quest — квест дня\n"
         "/map — карта знаний\n"
@@ -71,6 +72,17 @@ async def cmd_help(message: Message):
 async def cmd_menu(message: Message):
     await message.answer(
         "🎛 <b>Главное меню</b>",
+        reply_markup=main_menu_kb(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("app"))
+async def cmd_app(message: Message):
+    await message.answer(
+        "🎮 <b>Приложение MathQuest</b>\n\n"
+        "Открой его кнопкой ниже: задания, карта, магазин, герой и босс — "
+        "всё в одном окне прямо внутри Telegram.",
         reply_markup=main_menu_kb(),
         parse_mode="HTML",
     )

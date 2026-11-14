@@ -10,6 +10,13 @@ ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 DAILY_TASK_TIME = os.getenv("DAILY_TASK_TIME", "18:00")
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Minsk")
 
+# Mini App: bothost отдаёт его по HTTPS-домену и передаёт порт в PORT.
+WEBAPP_URL = os.getenv("WEBAPP_URL", "https://bot676767.bothost.tech").rstrip("/")
+PORT = int(os.getenv("PORT", "8080"))
+WEBAPP_DEV_MODE = os.getenv("WEBAPP_DEV_MODE", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
 # Bothost (и похожие хостинги) сохраняют между деплоями только папку /app/data
 # и передают её в DATA_DIR. Всё остальное пересоздаётся из git.
 

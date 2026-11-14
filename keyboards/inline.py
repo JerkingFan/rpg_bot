@@ -1,5 +1,7 @@
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from config import WEBAPP_URL
 
 
 def get_task_keyboard(assignment_id: int, has_answer: bool) -> InlineKeyboardMarkup:
@@ -13,12 +15,17 @@ def get_task_keyboard(assignment_id: int, has_answer: bool) -> InlineKeyboardMar
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    if WEBAPP_URL:
+        kb.button(text="🎮 Открыть приложение", web_app=WebAppInfo(url=WEBAPP_URL))
     kb.button(text="🧙 Герой", callback_data="menu:hero")
     kb.button(text="🎯 Квест дня", callback_data="menu:quest")
     kb.button(text="🗺 Карта", callback_data="menu:map")
     kb.button(text="🏰 Босс", callback_data="menu:boss")
     kb.button(text="🛒 Магазин", callback_data="menu:shop")
-    kb.adjust(2, 2, 1)
+    if WEBAPP_URL:
+        kb.adjust(1, 2, 2, 1)
+    else:
+        kb.adjust(2, 2, 1)
     return kb.as_markup()
 
 

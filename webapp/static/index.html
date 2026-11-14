@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0f1a">
+  <title>MathQuest</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <link rel="stylesheet" href="style.css?v=2">
+</head>
+<body>
+  <div id="boot" class="boot">
+    <div class="boot-logo">🎲</div>
+    <div class="boot-title">MathQuest</div>
+    <div class="boot-spinner"></div>
+  </div>
+
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">🎲</span>
+        <span>MathQuest</span>
+      </div>
+      <div class="chips">
+        <span class="chip" id="chip-coins">🪙 0</span>
+        <span class="chip" id="chip-streak">🔥 0</span>
+      </div>
+    </header>
+
+    <main id="view" class="view"></main>
+
+    <nav class="tabbar" id="tabbar">
+      <button class="tab active" data-tab="home"><span>🏠</span><small>Главная</small></button>
+      <button class="tab" data-tab="tasks"><span>📝</span><small>Задания</small></button>
+      <button class="tab" data-tab="map"><span>🗺</span><small>Карта</small></button>
+      <button class="tab" data-tab="shop"><span>🛒</span><small>Магазин</small></button>
+      <button class="tab" data-tab="hero"><span>🦸</span><small>Герой</small></button>
+      <button class="tab hidden" data-tab="teacher"><span>👨‍🏫</span><small>Учитель</small></button>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" data-action="close-modal"></div>
+    <div class="modal-card" id="modal-card"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <script src="app.js?v=2"></script>
+</body>
+</html>

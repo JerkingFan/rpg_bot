@@ -21,7 +21,7 @@ def _difficulty_chain(user_diff: str) -> list[str]:
     return DIFF_ORDER[idx:] + DIFF_ORDER[:idx]
 
 
-async def assign_daily_tasks(bot: Bot, user_id: int) -> int:
+async def assign_daily_tasks(bot: Bot | None, user_id: int, *, notify: bool = True) -> int:
     today = local_today()
 
     async with async_session() as session:
@@ -121,20 +121,21 @@ async def assign_daily_tasks(bot: Bot, user_id: int) -> int:
         all_assignments = debt_assignments + new_assignments
         if not all_assignments:
             # Не спамим, если задания на сегодня уже выданы.
-            if not today_ids:
+            if notify and bot and not today_ids:
                 await bot.send_message(user_id, "📭 На сегодня заданий нет. Отдыхай!")
             return 0
 
-        if debt_assignments:
+        if debt_assignments and notify and bot:
             await bot.send_message(
                 user_id,
                 f"⚠️ Сегодня также нужно закрыть {len(debt_assignments)} заданий из долга.",
             )
 
-        for i, da in enumerate(all_assignments, 1):
-            task = await session.get(Task, da.task_id)
-            if task:
-                await _send_task(bot, user_id, task, i, da.id)
+        if notify and bot:
+            for i, da in enumerate(all_assignments, 1):
+                task = await session.get(Task, da.task_id)
+                if task:
+                    await _send_task(bot, user_id, task, i, da.id)
 
         return len(all_assignments)
 
