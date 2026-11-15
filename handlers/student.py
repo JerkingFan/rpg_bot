@@ -57,7 +57,7 @@ def _task_feedback_edit(message: Message, text: str) -> None:
 def _result_lines(result: dict, assignment: DailyAssignment) -> list[str]:
     lines = ["✅ <b>Верно!</b>"]
     if result["first_clear"]:
-        lines.append(f"+{result['earned_xp']} XP, +{result['earned_coins']} 🪙")
+        lines.append(f"+{result['earned_xp']} XP, +{result['earned_coins']} 🪶")
         if result["earned_xp"] == 0:
             lines.append("Дневной лимит XP уже достигнут — приходи завтра.")
     else:
@@ -80,7 +80,7 @@ def _result_lines(result: dict, assignment: DailyAssignment) -> list[str]:
     if qr:
         lines.append(
             f"🎯 Квест «{html.escape(qr['title'])}» выполнен: "
-            f"+{qr['xp']} XP, +{qr['coins']} 🪙"
+            f"+{qr['xp']} XP, +{qr['coins']} 🪶"
         )
     return lines
 
@@ -132,7 +132,7 @@ async def cb_menu_quest(callback: CallbackQuery):
         f"🎯 <b>{html.escape(quest.title)}</b>\n\n"
         f"{html.escape(quest.description)}\n\n"
         f"Прогресс: <b>{uq.progress}/{quest.goal_value}</b>\n"
-        f"Награда: +{quest.reward_xp} XP, +{quest.reward_coins} 🪙\n"
+        f"Награда: +{quest.reward_xp} XP, +{quest.reward_coins} 🪶\n"
     )
     if count:
         text += f"\n📝 Заданий на сегодня: <b>{count}</b>"
@@ -215,12 +215,12 @@ async def _shop_view(session, user: User) -> tuple[str, object]:
 
     lines = [
         "🛒 <b>Магазин</b>",
-        f"🪙 У тебя: <b>{user.coins}</b> монет\n",
+        f"🪶 У тебя: <b>{user.coins}</b> пепла\n",
     ]
     for item in items:
         have = f" (у тебя: {inv[item.code]})" if inv.get(item.code) else ""
         lines.append(
-            f"{item.emoji} <b>{html.escape(item.title)}</b> — {item.price} 🪙{have}\n"
+            f"{item.emoji} <b>{html.escape(item.title)}</b> — {item.price} 🪶{have}\n"
             f"   <i>{html.escape(item.description)}</i>"
         )
     kb = shop_kb([(i.code, f"{i.emoji} {i.title}", i.price) for i in items])
@@ -527,7 +527,7 @@ async def process_boss_answer(message: Message, state: FSMContext):
             await state.clear()
             lines = [
                 "🏆 <b>Босс повержен!</b>",
-                f"+{result['reward_xp']} XP, +{result['reward_coins']} 🪙",
+                f"+{result['reward_xp']} XP, +{result['reward_coins']} 🪶",
             ]
             if not result.get("first_win"):
                 lines.append("Повторная победа: награда меньше.")
@@ -642,7 +642,7 @@ async def cmd_quest(message: Message):
         f"🎯 <b>{html.escape(quest.title)}</b>\n\n"
         f"{html.escape(quest.description)}\n\n"
         f"Прогресс: <b>{uq.progress}/{quest.goal_value}</b>\n"
-        f"Награда: +{quest.reward_xp} XP, +{quest.reward_coins} 🪙"
+        f"Награда: +{quest.reward_xp} XP, +{quest.reward_coins} 🪶"
     )
     await message.answer(
         text, reply_markup=quest_kb(has_assignments=count > 0), parse_mode="HTML",

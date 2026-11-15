@@ -46,6 +46,22 @@
 
   let toastTimer = null;
 
+  const RANK_ICONS = {
+    "Пепел": "🌑",
+    "Искра": "✨",
+    "Пламя": "🔥",
+    "Феникс": "🦅",
+    "Апостол": "👑",
+  };
+
+  function rankIcon(rank) {
+    return RANK_ICONS[rank] || "🌑";
+  }
+
+  function rankLine(rank) {
+    return `${rankIcon(rank)} ${rank || "Пепел"}`;
+  }
+
   // ─────────────────────────── Утилиты ───────────────────────────
 
   function esc(value) {
@@ -85,8 +101,8 @@
     if (!tg) return;
     document.body.dataset.theme = tg.colorScheme === "light" ? "light" : "dark";
     try {
-      tg.setHeaderColor(tg.themeParams?.bg_color || (tg.colorScheme === "light" ? "#ffffff" : "#0b0f1a"));
-      tg.setBackgroundColor(tg.themeParams?.bg_color || (tg.colorScheme === "light" ? "#ffffff" : "#0b0f1a"));
+      tg.setHeaderColor(tg.colorScheme === "light" ? "#efe8da" : "#08090b");
+      tg.setBackgroundColor(tg.colorScheme === "light" ? "#efe8da" : "#08090b");
     } catch (_) {}
   }
 
@@ -204,7 +220,7 @@
 
   function updateChips() {
     const user = state.me?.user;
-    document.getElementById("chip-coins").textContent = "🪙 " + (user?.coins ?? 0);
+    document.getElementById("chip-coins").textContent = "🪶 " + (user?.coins ?? 0);
     document.getElementById("chip-streak").textContent = "🔥 " + (user?.streak ?? 0);
   }
 
@@ -259,14 +275,14 @@
           <div class="avatar">${esc(initial)}</div>
           <div>
             <div class="hero-name">${esc(user.username || "Ученик")}</div>
-            <div class="hero-rank">${esc(user.rank)} · уровень ${user.level}</div>
+            <div class="hero-rank">${esc(rankLine(user.rank))} · уровень ${user.level}</div>
           </div>
           <div class="level-badge">⭐ ${user.level}</div>
         </div>
         <div class="xp-line"><span>XP</span><span>${user.xp_in_level} / ${user.xp_for_level}</span></div>
         <div class="bar"><i style="width:${xpPct}%"></i></div>
         <div class="hero-stats">
-          <div class="stat"><b>${user.coins}</b><span>монеты</span></div>
+          <div class="stat"><b>${user.coins}</b><span>пепел</span></div>
           <div class="stat"><b>${user.streak}</b><span>дней подряд</span></div>
           <div class="stat"><b>${user.xp}</b><span>всего XP</span></div>
         </div>
@@ -299,7 +315,7 @@
             <div class="quest-title">🎯 ${esc(quest.title)}</div>
             <div class="quest-desc">${esc(quest.description)}</div>
           </div>
-          <div class="quest-reward">+${quest.reward_xp} XP<br>+${quest.reward_coins} 🪙</div>
+          <div class="quest-reward">+${quest.reward_xp} XP<br>+${quest.reward_coins} 🪶</div>
         </div>
         <div class="quest-progress">
           <div class="xp-line"><span>Прогресс</span><span>${quest.progress} / ${quest.goal}</span></div>
@@ -460,7 +476,7 @@
     const items = state.shop?.items || [];
     const coins = state.me?.user?.coins ?? state.shop?.coins ?? 0;
     return `
-      <div class="section-title">Магазин <span class="muted small">🪙 ${coins}</span></div>
+      <div class="section-title">Магазин <span class="muted small">🪶 ${coins}</span></div>
       ${items.map((item) => `
         <div class="shop-item">
           <div class="shop-emoji">${esc(item.emoji)}</div>
@@ -470,12 +486,12 @@
             ${item.quantity ? `<small class="owned">У тебя: ${item.quantity}</small>` : ""}
           </div>
           <div class="shop-buy">
-            <div class="price">${item.price} 🪙</div>
+            <div class="price">${item.price} 🪶</div>
             <button class="btn btn-primary btn-sm" data-action="buy" data-code="${esc(item.code)}">Купить</button>
           </div>
         </div>
       `).join("")}
-      <div class="card mt12 small muted">Подсказку можно купить здесь или получить за монеты прямо в задании.</div>
+      <div class="card mt12 small muted">Подсказку можно купить здесь или получить за пепел прямо в задании.</div>
     `;
   }
 
@@ -930,7 +946,7 @@
     `).join("");
     const name = student.username ? "@" + student.username : "id:" + student.id;
     modalCard.innerHTML = `
-      ${teacherModalHead("👤 " + esc(name), `${student.rank} · уровень ${student.level}`)}
+      ${teacherModalHead("👤 " + esc(name), `${rankLine(student.rank)} · уровень ${student.level}`)}
       <div class="teacher-stats">
         ${teacherStat("верно", student.correct, "good")}
         ${teacherStat("ошибок", student.wrong, "bad")}
@@ -943,7 +959,7 @@
         <div class="xp-line mt8"><span>Сегодня</span><span>${student.today_completed} / ${student.today_total}</span></div>
         <div class="bar good"><i style="width:${pct(student.today_completed, student.today_total || 1)}%"></i></div>
         <div class="small muted mt8">Тема: ${esc(student.topic_title || "не назначена")}</div>
-        <div class="small muted">За сегодня: +${student.daily_xp} XP, +${student.daily_coins} 🪙</div>
+        <div class="small muted">За сегодня: +${student.daily_xp} XP, +${student.daily_coins} 🪶</div>
       </div>
       <div class="section-title">Занятие</div>
       <div class="card teacher-form">
@@ -956,7 +972,7 @@
       <div class="grid-2 mt12">
         <button class="btn btn-soft" data-action="teacher-assign" data-id="${student.id}">📤 Выдать задания</button>
         <button class="btn btn-soft" data-action="teacher-individual" data-id="${student.id}">✏️ Индивидуальное</button>
-        <button class="btn btn-soft" data-action="teacher-bonus-student" data-id="${student.id}">🎁 XP/монеты</button>
+        <button class="btn btn-soft" data-action="teacher-bonus-student" data-id="${student.id}">🎁 XP/пепел</button>
         <button class="btn btn-soft" data-action="teacher-message" data-id="${student.id}">✉️ Написать</button>
       </div>
       <div class="section-title">Последние задания</div>
@@ -1313,7 +1329,7 @@
           : '<button class="btn btn-good" disabled>✅ Засчитано</button>'}
         <button class="btn btn-soft" data-action="teacher-bonus" data-id="${review.id}">🎁 Бонус</button>
       </div>
-      <div class="teacher-hint mt12">«Засчитать» начислит XP и монеты как за правильный ответ. «Бонус» — только награда за усилие.</div>
+      <div class="teacher-hint mt12">«Засчитать» начислит XP и пепел как за правильный ответ. «Бонус» — только награда за усилие.</div>
     `;
     showModal();
     renderMath(modalCard);
@@ -1323,7 +1339,7 @@
     button.disabled = true;
     try {
       const result = await api(`/api/teacher/reviews/${id}/accept`, { method: "POST" });
-      toast(`Засчитано: +${result.reward.xp} XP, +${result.reward.coins} 🪙`, "good");
+      toast(`Засчитано: +${result.reward.xp} XP, +${result.reward.coins} 🪶`, "good");
       haptic("success");
       state.teacher.dashboard = null;
       closeModal();
@@ -1338,7 +1354,7 @@
     button.disabled = true;
     try {
       const result = await api(`/api/teacher/reviews/${id}/bonus`, { method: "POST" });
-      toast(`Бонус: +${result.xp} XP, +${result.coins} 🪙`, "good");
+      toast(`Бонус: +${result.xp} XP, +${result.coins} 🪶`, "good");
       haptic("success");
       closeModal();
       await loadTeacherSection("reviews");
@@ -1397,7 +1413,7 @@
     const coins = Number(document.getElementById("teacher-bonus-coins")?.value || 0);
     const comment = document.getElementById("teacher-bonus-comment")?.value.trim() || "";
     if (!Number.isFinite(xp) || !Number.isFinite(coins) || (xp <= 0 && coins <= 0)) {
-      toast("Укажи XP или монеты", "bad");
+      toast("Укажи XP или пепел", "bad");
       return;
     }
     button.disabled = true;
@@ -1410,7 +1426,7 @@
           comment: comment || null,
         }),
       });
-      toast(`Начислено: +${result.xp} XP, +${result.coins} 🪙`, "good");
+      toast(`Начислено: +${result.xp} XP, +${result.coins} 🪶`, "good");
       haptic("success");
       state.teacher.dashboard = null;
       await openTeacherStudent(studentId);
@@ -1718,7 +1734,7 @@
       if (result.status === "correct") {
         haptic("success");
         const reward = result.reward || {};
-        let message = `+${reward.xp || 0} XP, +${reward.coins || 0} 🪙`;
+        let message = `+${reward.xp || 0} XP, +${reward.coins || 0} 🪶`;
         if (reward.quest_reward) message += " · квест выполнен!";
         toast(message, "good");
       } else if (result.status === "wrong") {
@@ -1751,7 +1767,7 @@
         task.used_hint = true;
       }
       if (state.me?.user) state.me.user.coins = result.coins;
-      toast(result.paid_with === "item" ? "Подсказка из предмета" : `Списано ${result.price} 🪙`);
+      toast(result.paid_with === "item" ? "Подсказка из предмета" : `Списано ${result.price} 🪶`);
       render();
     } catch (error) {
       toast(error.message, "bad");
@@ -1917,7 +1933,7 @@
           <div class="card center">
             <div style="font-size:44px">🏆</div>
             <h3>Победа</h3>
-            <p class="muted">+${result.reward?.xp || 0} XP, +${result.reward?.coins || 0} 🪙</p>
+            <p class="muted">+${result.reward?.xp || 0} XP, +${result.reward?.coins || 0} 🪶</p>
             ${result.reward?.first_win === false ? '<p class="small muted">Повторная победа: награда меньше.</p>' : ""}
             <button class="btn btn-primary btn-block mt12" data-action="close-modal">Забрать награду</button>
           </div>

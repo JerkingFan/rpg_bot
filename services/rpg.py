@@ -1,4 +1,4 @@
-"""RPG-слой: персонаж, монеты, навыки, мастерство, квесты, магазин и боссы.
+"""RPG-слой: персонаж, пепел, навыки, мастерство, квесты, магазин и боссы.
 
 Главный принцип: RPG-награды выдаются только за реально решённые задачи.
 Повторное решение той же задачи не даёт XP — иначе появляется ферма.
@@ -25,12 +25,20 @@ from utils.time import local_today, utcnow, period_key
 # ─────────────────────────── Константы ───────────────────────────
 
 RANKS = [
-    (1, "Ученик"),
-    (5, "Подмастерье"),
-    (10, "Чародей"),
-    (15, "Архимаг"),
-    (25, "Хранитель Формул"),
+    (1, "Пепел"),
+    (5, "Искра"),
+    (10, "Пламя"),
+    (15, "Феникс"),
+    (25, "Апостол"),
 ]
+
+RANK_ICONS = {
+    "Пепел": "🌑",
+    "Искра": "✨",
+    "Пламя": "🔥",
+    "Феникс": "🦅",
+    "Апостол": "👑",
+}
 
 SKILLS = {
     "algebra": "Алгебра",
@@ -254,7 +262,7 @@ async def buy_item(session: AsyncSession, user: User, code: str) -> dict:
     if not item:
         return {"ok": False, "error": "Такого предмета нет."}
     if user.coins < item.price:
-        return {"ok": False, "error": f"Не хватает монет: нужно {item.price}, у тебя {user.coins}."}
+        return {"ok": False, "error": f"Не хватает пепла: нужно {item.price}, у тебя {user.coins}."}
 
     user.coins -= item.price
     inv = (await session.execute(
@@ -298,7 +306,7 @@ async def use_hint(session: AsyncSession, user: User, assignment: DailyAssignmen
         )).scalar_one_or_none()
         price = hint_item.price if hint_item else 15
         if user.coins < price:
-            return {"ok": False, "error": f"Нужно {price} монет или предмет «Подсказка»."}
+            return {"ok": False, "error": f"Нужно {price} пепла или предмет «Подсказка»."}
         user.coins -= price
         paid_with = "coins"
 
@@ -625,10 +633,10 @@ async def hero_card(session: AsyncSession, user: User) -> str:
 
     lines = [
         f"🧙 <b>{html.escape(user.username or str(user.id))}</b>",
-        f"🏅 Ранг: <b>{rank_for_level(user.level)}</b>",
+        f"🏅 Ранг: <b>{RANK_ICONS.get(rank_for_level(user.level), '🌑')} {rank_for_level(user.level)}</b>",
         f"⭐ Уровень: <b>{user.level}</b>   💠 XP: <b>{user.xp}</b>",
         f"<code>{xp_bar(user.xp)}</code> {user.xp % LEVEL_UP_XP}/{LEVEL_UP_XP}",
-        f"🪙 Монеты: <b>{user.coins}</b>   🔥 Стрик: <b>{user.streak}</b> дн.",
+        f"🪶 Пепел: <b>{user.coins}</b>   🔥 Стрик: <b>{user.streak}</b> дн.",
     ]
 
     star = (await session.execute(
@@ -660,7 +668,7 @@ async def hero_card(session: AsyncSession, user: User) -> str:
 
     lines.append(
         f"\n🎯 <b>{html.escape(quest.title)}</b>: {uq.progress}/{quest.goal_value}\n"
-        f"Награда: +{quest.reward_xp} XP, +{quest.reward_coins} 🪙"
+        f"Награда: +{quest.reward_xp} XP, +{quest.reward_coins} 🪶"
     )
     return "\n".join(lines)
 

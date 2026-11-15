@@ -26,12 +26,12 @@ class SkillMappingTests(unittest.TestCase):
 
 class RankTests(unittest.TestCase):
     def test_ranks(self):
-        self.assertEqual(rank_for_level(1), "Ученик")
-        self.assertEqual(rank_for_level(5), "Подмастерье")
-        self.assertEqual(rank_for_level(10), "Чародей")
-        self.assertEqual(rank_for_level(15), "Архимаг")
-        self.assertEqual(rank_for_level(25), "Хранитель Формул")
-        self.assertEqual(rank_for_level(100), "Хранитель Формул")
+        self.assertEqual(rank_for_level(1), "Пепел")
+        self.assertEqual(rank_for_level(5), "Искра")
+        self.assertEqual(rank_for_level(10), "Пламя")
+        self.assertEqual(rank_for_level(15), "Феникс")
+        self.assertEqual(rank_for_level(25), "Апостол")
+        self.assertEqual(rank_for_level(100), "Апостол")
 
 
 class BarTests(unittest.TestCase):

@@ -38,6 +38,7 @@ from services.gamification import LEVEL_UP_XP
 from services.rpg import (
     DAILY_COIN_CAP,
     DAILY_XP_CAP,
+    RANK_ICONS,
     SKILL_EMOJI,
     SKILLS,
     answer_boss,
@@ -76,12 +77,14 @@ class BuyIn(BaseModel):
 # ─────────────────────────── Сериализация ───────────────────────────
 
 def _user_stats(user: User) -> dict:
+    rank = rank_for_level(user.level)
     return {
         "id": user.id,
         "username": user.username,
         "xp": user.xp,
         "level": user.level,
-        "rank": rank_for_level(user.level),
+        "rank": rank,
+        "rank_icon": RANK_ICONS.get(rank, "🌑"),
         "xp_in_level": user.xp % LEVEL_UP_XP,
         "xp_for_level": LEVEL_UP_XP,
         "coins": user.coins,
@@ -302,7 +305,7 @@ async def _shop_payload(session: AsyncSession, user: User) -> dict:
 
 def create_app(bot: Bot | None = None) -> FastAPI:
     app = FastAPI(
-        title="RPG Math Mini App",
+        title="Reborn: Испытание",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,

@@ -34,6 +34,7 @@ from services.daily_tasks import assign_daily_tasks
 from services.gamification import LEVEL_UP_XP
 from services.rpg import (
     COINS_BY_DIFFICULTY,
+    RANK_ICONS,
     XP_BY_DIFFICULTY,
     award_bonus,
     complete_task,
@@ -135,6 +136,7 @@ def _student_payload(
         "username": user.username,
         "level": user.level,
         "rank": rank_for_level(user.level),
+        "rank_icon": RANK_ICONS.get(rank_for_level(user.level), "🌑"),
         "xp": user.xp,
         "xp_in_level": user.xp % LEVEL_UP_XP,
         "xp_for_level": LEVEL_UP_XP,

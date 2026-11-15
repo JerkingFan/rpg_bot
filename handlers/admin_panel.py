@@ -949,7 +949,7 @@ async def cb_accept_answer(callback: CallbackQuery):
             f"✅ <b>Учитель засчитал твой ответ как правильный!</b>\n"
             f"Задание: «{html.escape(task.text[:100])}{'…' if len(task.text) > 100 else ''}»\n"
             f"Твой ответ: <code>{html.escape(a.student_answer or '—')}</code>\n\n"
-            f"+{result['earned_xp']} XP, +{result['earned_coins']} 🪙"
+            f"+{result['earned_xp']} XP, +{result['earned_coins']} 🪶"
         )
         if result["leveled_up"]:
             msg += f"\n🎉 Новый уровень: <b>{result['new_level']}</b>!"
@@ -1007,7 +1007,7 @@ async def cb_bonus_xp(callback: CallbackQuery):
     try:
         msg = (
             f"🎁 <b>Учитель начислил тебе бонус</b>\n"
-            f"+{result['xp']} XP, +{result['coins']} 🪙 за усилие по заданию"
+            f"+{result['xp']} XP, +{result['coins']} 🪶 за усилие по заданию"
         )
         if result["leveled_up"]:
             msg += f"\n🎉 Новый уровень: <b>{result['new_level']}</b>!"
