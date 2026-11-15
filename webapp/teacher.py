@@ -6,21 +6,28 @@
 """
 from __future__ import annotations
 
+import asyncio
+import csv
 import html
+import io
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import case, cast, desc, func, or_, select, update, String
 
 from config import ADMIN_IDS
 from database.base import async_session
 from database.models import (
+    BossFight,
+    CompletedTask,
     DailyAssignment,
     LessonSession,
     Task,
     Topic,
+    TopicProgress,
     User,
 )
 from services.daily_tasks import assign_daily_tasks
@@ -71,6 +78,21 @@ class ImportIn(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
 
 
+class BonusIn(BaseModel):
+    xp: int = Field(0, ge=0, le=100_000)
+    coins: int = Field(0, ge=0, le=100_000)
+    comment: str | None = Field(default=None, max_length=500)
+
+
+class MessageIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class BroadcastIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
+    audience: Literal["all", "debt", "pending", "today_open"] = "all"
+
+
 # ─────────────────────────── Вспомогательное ───────────────────────────
 
 def _status(assignment: DailyAssignment) -> str:
@@ -83,6 +105,16 @@ def _status(assignment: DailyAssignment) -> str:
     return "review"
 
 
+def _board_status(today_total: int, today_completed: int) -> str:
+    if today_total <= 0:
+        return "no_tasks"
+    if today_completed >= today_total:
+        return "done"
+    if today_completed > 0:
+        return "partial"
+    return "none"
+
+
 def _student_payload(
     user: User,
     *,
@@ -93,6 +125,10 @@ def _student_payload(
     debt: int = 0,
     today_total: int = 0,
     today_completed: int = 0,
+    today_correct: int = 0,
+    today_wrong: int = 0,
+    today_pending: int = 0,
+    last_activity: datetime | None = None,
 ) -> dict:
     return {
         "id": user.id,
@@ -104,6 +140,8 @@ def _student_payload(
         "xp_for_level": LEVEL_UP_XP,
         "coins": user.coins,
         "streak": user.streak,
+        "daily_xp": user.daily_xp,
+        "daily_coins": user.daily_coins,
         "topic_id": user.current_topic_id,
         "topic_title": topic_title,
         "difficulty": user.current_difficulty,
@@ -113,7 +151,99 @@ def _student_payload(
         "debt": debt,
         "today_total": today_total,
         "today_completed": today_completed,
+        "today_correct": today_correct,
+        "today_wrong": today_wrong,
+        "today_pending": today_pending,
+        "status": _board_status(today_total, today_completed),
+        "last_activity": last_activity.isoformat() if last_activity else None,
     }
+
+
+async def _student_metrics(session, today):
+    """Общие счётчики по каждому ученику (без сегодняшних)."""
+    rows = (await session.execute(
+        select(
+            DailyAssignment.user_id,
+            func.sum(case(
+                (DailyAssignment.is_correct.is_(True), 1), else_=0,
+            )).label("correct"),
+            func.sum(case(
+                (DailyAssignment.is_correct.is_(False), 1), else_=0,
+            )).label("wrong"),
+            func.sum(case(
+                (
+                    DailyAssignment.is_completed.is_(True)
+                    & DailyAssignment.is_correct.is_(None),
+                    1,
+                ),
+                else_=0,
+            )).label("pending"),
+            func.sum(case(
+                (
+                    DailyAssignment.is_completed.is_(False)
+                    & (DailyAssignment.assigned_date < today),
+                    1,
+                ),
+                else_=0,
+            )).label("debt"),
+            func.max(DailyAssignment.answered_at).label("last_activity"),
+        ).group_by(DailyAssignment.user_id)
+    )).all()
+    return {row[0]: row for row in rows}
+
+
+async def _today_metrics(session, today):
+    """Счётчики только за сегодня."""
+    rows = (await session.execute(
+        select(
+            DailyAssignment.user_id,
+            func.count().label("total"),
+            func.sum(case(
+                (DailyAssignment.is_completed.is_(True), 1), else_=0,
+            )).label("completed"),
+            func.sum(case(
+                (DailyAssignment.is_correct.is_(True), 1), else_=0,
+            )).label("correct"),
+            func.sum(case(
+                (DailyAssignment.is_correct.is_(False), 1), else_=0,
+            )).label("wrong"),
+            func.sum(case(
+                (
+                    DailyAssignment.is_completed.is_(True)
+                    & DailyAssignment.is_correct.is_(None),
+                    1,
+                ),
+                else_=0,
+            )).label("pending"),
+        )
+        .where(DailyAssignment.assigned_date == today)
+        .group_by(DailyAssignment.user_id)
+    )).all()
+    return {row[0]: row for row in rows}
+
+
+def _student_from_rows(
+    user: User,
+    topics: dict[int, str],
+    metrics: dict,
+    today_metrics: dict,
+) -> dict:
+    row = metrics.get(user.id)
+    trow = today_metrics.get(user.id)
+    return _student_payload(
+        user,
+        topic_title=topics.get(user.current_topic_id),
+        correct=int(row[1] or 0) if row else 0,
+        wrong=int(row[2] or 0) if row else 0,
+        pending=int(row[3] or 0) if row else 0,
+        debt=int(row[4] or 0) if row else 0,
+        last_activity=row[5] if row else None,
+        today_total=int(trow[1] or 0) if trow else 0,
+        today_completed=int(trow[2] or 0) if trow else 0,
+        today_correct=int(trow[3] or 0) if trow else 0,
+        today_wrong=int(trow[4] or 0) if trow else 0,
+        today_pending=int(trow[5] or 0) if trow else 0,
+    )
 
 
 def _task_payload(task: Task) -> dict:
@@ -239,11 +369,201 @@ async def overview():
     }
 
 
+# ─────────────────────────── Табло ───────────────────────────
+
+@router.get("/dashboard")
+async def dashboard():
+    today = local_today()
+    week_start = today - timedelta(days=6)
+    async with async_session() as session:
+        q = select(User).where(User.role == "student")
+        if ADMIN_IDS:
+            q = q.where(User.id.notin_(ADMIN_IDS))
+        users = list((await session.execute(
+            q.order_by(User.xp.desc())
+        )).scalars().all())
+
+        topic_rows = (await session.execute(
+            select(Topic.id, Topic.title)
+        )).all()
+        topics = {tid: title for tid, title in topic_rows}
+
+        metrics = await _student_metrics(session, today)
+        today_metrics = await _today_metrics(session, today)
+
+        board = [
+            _student_from_rows(user, topics, metrics, today_metrics)
+            for user in users
+        ]
+        board.sort(key=lambda s: (
+            -(
+                s["debt"] * 3
+                + s["pending"] * 2
+                + max(0, s["today_total"] - s["today_completed"])
+            ),
+            -s["daily_xp"],
+            -s["xp"],
+        ))
+
+        week_rows = (await session.execute(
+            select(
+                DailyAssignment.assigned_date,
+                func.count(),
+                func.sum(case(
+                    (DailyAssignment.is_completed.is_(True), 1), else_=0,
+                )),
+                func.sum(case(
+                    (DailyAssignment.is_correct.is_(True), 1), else_=0,
+                )),
+                func.sum(case(
+                    (DailyAssignment.is_correct.is_(False), 1), else_=0,
+                )),
+            )
+            .where(DailyAssignment.assigned_date >= week_start)
+            .group_by(DailyAssignment.assigned_date)
+        )).all()
+        week_by_date = {row[0]: row for row in week_rows}
+        week = []
+        for offset in range(7):
+            day = week_start + timedelta(days=offset)
+            row = week_by_date.get(day)
+            week.append({
+                "date": day.isoformat(),
+                "assigned": int(row[1] or 0) if row else 0,
+                "completed": int(row[2] or 0) if row else 0,
+                "correct": int(row[3] or 0) if row else 0,
+                "wrong": int(row[4] or 0) if row else 0,
+            })
+
+        wrong_expr = func.sum(case(
+            (DailyAssignment.is_correct.is_(False), 1), else_=0,
+        ))
+        correct_expr = func.sum(case(
+            (DailyAssignment.is_correct.is_(True), 1), else_=0,
+        ))
+        weak_rows = (await session.execute(
+            select(Topic.id, Topic.title, wrong_expr, correct_expr)
+            .join(Task, Task.topic_id == Topic.id)
+            .join(DailyAssignment, DailyAssignment.task_id == Task.id)
+            .group_by(Topic.id)
+            .having(wrong_expr > 0)
+            .order_by(desc(wrong_expr))
+            .limit(8)
+        )).all()
+
+        recent_rows = (await session.execute(
+            select(DailyAssignment, User, Task)
+            .join(User, User.id == DailyAssignment.user_id)
+            .join(Task, Task.id == DailyAssignment.task_id)
+            .where(DailyAssignment.is_completed.is_(True))
+            .order_by(desc(DailyAssignment.answered_at))
+            .limit(10)
+        )).all()
+
+        pending_review = (await session.execute(
+            select(func.count()).select_from(DailyAssignment).where(
+                DailyAssignment.is_completed.is_(True),
+                DailyAssignment.is_correct.is_(None),
+            )
+        )).scalar() or 0
+        wrong_total = (await session.execute(
+            select(func.count()).select_from(DailyAssignment).where(
+                DailyAssignment.is_completed.is_(True),
+                DailyAssignment.is_correct.is_(False),
+            )
+        )).scalar() or 0
+        tasks_count = (await session.execute(
+            select(func.count()).select_from(Task)
+        )).scalar() or 0
+        active_topic = (await session.execute(
+            select(Topic).where(Topic.is_active.is_(True)).limit(1)
+        )).scalar_one_or_none()
+
+    today_total = sum(s["today_total"] for s in board)
+    today_completed = sum(s["today_completed"] for s in board)
+    today_correct = sum(s["today_correct"] for s in board)
+    today_wrong = sum(s["today_wrong"] for s in board)
+    today_pending = sum(s["today_pending"] for s in board)
+    debt_total = sum(s["debt"] for s in board)
+    active_today = sum(1 for s in board if s["today_completed"] > 0)
+
+    top_students = sorted(
+        board, key=lambda s: (s["daily_xp"], s["xp"]), reverse=True,
+    )[:5]
+
+    return {
+        "students": len(board),
+        "topics": len(topics),
+        "tasks": tasks_count,
+        "pending_review": pending_review,
+        "wrong_total": wrong_total,
+        "today_total": today_total,
+        "today_completed": today_completed,
+        "today_correct": today_correct,
+        "today_wrong": today_wrong,
+        "today_pending": today_pending,
+        "debt_total": debt_total,
+        "active_today": active_today,
+        "active_topic": (
+            {"id": active_topic.id, "title": active_topic.title}
+            if active_topic else None
+        ),
+        "board": board,
+        "week": week,
+        "weak_topics": [
+            {
+                "id": row[0],
+                "title": row[1],
+                "wrong": int(row[2] or 0),
+                "correct": int(row[3] or 0),
+            }
+            for row in weak_rows
+        ],
+        "top_students": [
+            {
+                "id": s["id"],
+                "username": s["username"],
+                "level": s["level"],
+                "rank": s["rank"],
+                "xp": s["xp"],
+                "daily_xp": s["daily_xp"],
+                "daily_coins": s["daily_coins"],
+                "coins": s["coins"],
+                "streak": s["streak"],
+                "today_completed": s["today_completed"],
+                "today_total": s["today_total"],
+            }
+            for s in top_students
+        ],
+        "recent": [
+            {
+                "id": assignment.id,
+                "student_id": user.id,
+                "username": user.username,
+                "task_text": task.text,
+                "status": _status(assignment),
+                "is_correct": assignment.is_correct,
+                "answered_at": (
+                    assignment.answered_at.isoformat()
+                    if assignment.answered_at else None
+                ),
+            }
+            for assignment, user, task in recent_rows
+        ],
+    }
+
+
 # ─────────────────────────── Ученики ───────────────────────────
 
 @router.get("/students")
 async def students(
     query: str = "",
+    flt: Literal[
+        "all", "debt", "pending", "today_open", "active_today", "inactive",
+    ] = Query("all", alias="filter"),
+    sort_by: Literal[
+        "xp", "debt", "pending", "level", "name", "today",
+    ] = Query("xp", alias="sort"),
     limit: int = Query(100, ge=1, le=300),
 ):
     today = local_today()
@@ -258,70 +578,57 @@ async def students(
                 User.username.ilike(like),
                 cast(User.id, String).like(like),
             ))
-        q = q.order_by(User.xp.desc()).limit(limit)
-        users = list((await session.execute(q)).scalars().all())
+        users = list((await session.execute(
+            q.limit(1000)
+        )).scalars().all())
 
         topic_rows = (await session.execute(
             select(Topic.id, Topic.title)
         )).all()
         topics = {tid: title for tid, title in topic_rows}
+        metrics = await _student_metrics(session, today)
+        today_metrics = await _today_metrics(session, today)
 
-        counts = (await session.execute(
-            select(
-                DailyAssignment.user_id,
-                func.sum(case(
-                    (DailyAssignment.is_correct.is_(True), 1), else_=0,
-                )).label("correct"),
-                func.sum(case(
-                    (DailyAssignment.is_correct.is_(False), 1), else_=0,
-                )).label("wrong"),
-                func.sum(case(
-                    (
-                        DailyAssignment.is_completed.is_(True)
-                        & DailyAssignment.is_correct.is_(None),
-                        1,
-                    ),
-                    else_=0,
-                )).label("pending"),
-                func.sum(case(
-                    (
-                        DailyAssignment.is_completed.is_(False)
-                        & (DailyAssignment.assigned_date < today),
-                        1,
-                    ),
-                    else_=0,
-                )).label("debt"),
-            ).group_by(DailyAssignment.user_id)
-        )).all()
-        by_user = {row[0]: row for row in counts}
+    result = [
+        _student_from_rows(user, topics, metrics, today_metrics)
+        for user in users
+    ]
 
-        today_counts = (await session.execute(
-            select(
-                DailyAssignment.user_id,
-                func.count().label("total"),
-                func.sum(case(
-                    (DailyAssignment.is_completed.is_(True), 1), else_=0,
-                )).label("completed"),
-            )
-            .where(DailyAssignment.assigned_date == today)
-            .group_by(DailyAssignment.user_id)
-        )).all()
-        today_by_user = {row[0]: row for row in today_counts}
+    if flt == "debt":
+        result = [s for s in result if s["debt"] > 0]
+    elif flt == "pending":
+        result = [s for s in result if s["pending"] > 0]
+    elif flt == "today_open":
+        result = [
+            s for s in result if s["today_total"] > s["today_completed"]
+        ]
+    elif flt == "active_today":
+        result = [s for s in result if s["today_completed"] > 0]
+    elif flt == "inactive":
+        cutoff = (
+            datetime.now(timezone.utc).replace(tzinfo=None)
+            - timedelta(days=7)
+        )
+        result = [
+            s for s in result
+            if not s["last_activity"]
+            or datetime.fromisoformat(s["last_activity"]) < cutoff
+        ]
 
-    result = []
-    for user in users:
-        row = by_user.get(user.id)
-        trow = today_by_user.get(user.id)
-        result.append(_student_payload(
-            user,
-            topic_title=topics.get(user.current_topic_id),
-            correct=int(row[1] or 0) if row else 0,
-            wrong=int(row[2] or 0) if row else 0,
-            pending=int(row[3] or 0) if row else 0,
-            debt=int(row[4] or 0) if row else 0,
-            today_total=int(trow[1] or 0) if trow else 0,
-            today_completed=int(trow[2] or 0) if trow else 0,
-        ))
+    if sort_by == "debt":
+        result.sort(key=lambda s: (-s["debt"], -s["pending"], -s["xp"]))
+    elif sort_by == "pending":
+        result.sort(key=lambda s: (-s["pending"], -s["debt"], -s["xp"]))
+    elif sort_by == "level":
+        result.sort(key=lambda s: (-s["level"], -s["xp"]))
+    elif sort_by == "name":
+        result.sort(key=lambda s: (s["username"] or "").lower())
+    elif sort_by == "today":
+        result.sort(key=lambda s: (-s["today_completed"], -s["xp"]))
+    else:
+        result.sort(key=lambda s: (-s["xp"], -s["level"]))
+
+    result = result[:limit]
     return {"students": result, "total": len(result)}
 
 
@@ -334,45 +641,9 @@ async def student_detail(student_id: int):
             await session.get(Topic, user.current_topic_id)
             if user.current_topic_id else None
         )
-        correct = (await session.execute(
-            select(func.count()).select_from(DailyAssignment).where(
-                DailyAssignment.user_id == student_id,
-                DailyAssignment.is_correct.is_(True),
-            )
-        )).scalar() or 0
-        wrong = (await session.execute(
-            select(func.count()).select_from(DailyAssignment).where(
-                DailyAssignment.user_id == student_id,
-                DailyAssignment.is_correct.is_(False),
-            )
-        )).scalar() or 0
-        pending = (await session.execute(
-            select(func.count()).select_from(DailyAssignment).where(
-                DailyAssignment.user_id == student_id,
-                DailyAssignment.is_completed.is_(True),
-                DailyAssignment.is_correct.is_(None),
-            )
-        )).scalar() or 0
-        debt = (await session.execute(
-            select(func.count()).select_from(DailyAssignment).where(
-                DailyAssignment.user_id == student_id,
-                DailyAssignment.is_completed.is_(False),
-                DailyAssignment.assigned_date < today,
-            )
-        )).scalar() or 0
-        today_total = (await session.execute(
-            select(func.count()).select_from(DailyAssignment).where(
-                DailyAssignment.user_id == student_id,
-                DailyAssignment.assigned_date == today,
-            )
-        )).scalar() or 0
-        today_completed = (await session.execute(
-            select(func.count()).select_from(DailyAssignment).where(
-                DailyAssignment.user_id == student_id,
-                DailyAssignment.assigned_date == today,
-                DailyAssignment.is_completed.is_(True),
-            )
-        )).scalar() or 0
+        metrics = await _student_metrics(session, today)
+        today_metrics = await _today_metrics(session, today)
+        topics = {topic.id: topic.title} if topic else {}
 
         recent = (await session.execute(
             select(DailyAssignment, Task)
@@ -383,16 +654,7 @@ async def student_detail(student_id: int):
         )).all()
 
     return {
-        "student": _student_payload(
-            user,
-            topic_title=topic.title if topic else None,
-            correct=correct,
-            wrong=wrong,
-            pending=pending,
-            debt=debt,
-            today_total=today_total,
-            today_completed=today_completed,
-        ),
+        "student": _student_from_rows(user, topics, metrics, today_metrics),
         "recent": [
             {
                 "id": assignment.id,
@@ -494,6 +756,123 @@ async def individual_task(student_id: int, body: TaskIn):
         await session.commit()
         await session.refresh(task)
         return {"ok": True, "task": _task_payload(task)}
+
+
+@router.post("/students/{student_id}/bonus")
+async def manual_bonus(student_id: int, body: BonusIn, request: Request):
+    if body.xp <= 0 and body.coins <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Укажи XP или монеты",
+        )
+    async with async_session() as session:
+        user = await _get_student(session, student_id)
+        result = await award_bonus(
+            session, user, xp=body.xp, coins=body.coins,
+        )
+        await session.commit()
+
+        message = (
+            "🎁 <b>Учитель начислил тебе награду</b>\n"
+            f"+{result['xp']} XP, +{result['coins']} 🪙"
+        )
+        if body.comment:
+            message += f"\n\n{html.escape(body.comment.strip())}"
+        if result["leveled_up"]:
+            message += f"\n🎉 Новый уровень: <b>{result['new_level']}</b>!"
+
+    notified = await _notify(request, user.id, message)
+    return {
+        "ok": True,
+        "notified": notified,
+        "xp": result["xp"],
+        "coins": result["coins"],
+        "leveled_up": result["leveled_up"],
+        "new_level": result["new_level"],
+    }
+
+
+@router.post("/students/{student_id}/message")
+async def message_student(student_id: int, body: MessageIn, request: Request):
+    async with async_session() as session:
+        user = await _get_student(session, student_id)
+
+    text = (
+        "✉️ <b>Сообщение от учителя</b>\n\n"
+        f"{html.escape(body.text.strip())}"
+    )
+    notified = await _notify(request, user.id, text)
+    return {"ok": True, "notified": notified}
+
+
+@router.post("/broadcast")
+async def broadcast(body: BroadcastIn, request: Request):
+    today = local_today()
+    text = (
+        "📣 <b>Сообщение от учителя</b>\n\n"
+        f"{html.escape(body.text.strip())}"
+    )
+
+    async with async_session() as session:
+        q = select(User.id).where(User.role == "student")
+        if ADMIN_IDS:
+            q = q.where(User.id.notin_(ADMIN_IDS))
+        all_ids = {row[0] for row in (await session.execute(q)).all()}
+
+        target_ids = all_ids
+        if body.audience == "debt":
+            rows = (await session.execute(
+                select(DailyAssignment.user_id).where(
+                    DailyAssignment.is_completed.is_(False),
+                    DailyAssignment.assigned_date < today,
+                ).distinct()
+            )).all()
+            target_ids = all_ids & {row[0] for row in rows}
+        elif body.audience == "pending":
+            rows = (await session.execute(
+                select(DailyAssignment.user_id).where(
+                    DailyAssignment.is_completed.is_(True),
+                    DailyAssignment.is_correct.is_(None),
+                ).distinct()
+            )).all()
+            target_ids = all_ids & {row[0] for row in rows}
+        elif body.audience == "today_open":
+            rows = (await session.execute(
+                select(DailyAssignment.user_id).where(
+                    DailyAssignment.assigned_date == today,
+                    DailyAssignment.is_completed.is_(False),
+                ).distinct()
+            )).all()
+            target_ids = all_ids & {row[0] for row in rows}
+
+    bot = getattr(request.app.state, "bot", None)
+    if bot is None:
+        return {
+            "ok": True,
+            "notified": False,
+            "total": len(target_ids),
+            "sent": 0,
+            "errors": 0,
+        }
+
+    sent = 0
+    errors = 0
+    for user_id in sorted(target_ids):
+        try:
+            await bot.send_message(user_id, text, parse_mode="HTML")
+            sent += 1
+        except Exception:
+            logger.exception("Не удалось отправить рассылку %s", user_id)
+            errors += 1
+        await asyncio.sleep(0.05)
+
+    return {
+        "ok": True,
+        "notified": True,
+        "total": len(target_ids),
+        "sent": sent,
+        "errors": errors,
+    }
 
 
 # ─────────────────────────── Темы и задания ───────────────────────────
@@ -656,13 +1035,120 @@ async def create_task(topic_id: int, body: TaskIn):
         return {"ok": True, "task": _task_payload(task)}
 
 
+@router.patch("/topics/{topic_id}/tasks/{task_id}")
+async def update_task(topic_id: int, task_id: int, body: TaskIn):
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Текст задания пустой")
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task or task.topic_id != topic_id:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+        task.text = text
+        task.answer = (body.answer or "").strip() or None
+        task.difficulty = body.difficulty
+        await session.commit()
+        await session.refresh(task)
+        return {"ok": True, "task": _task_payload(task)}
+
+
+@router.delete("/topics/{topic_id}/tasks/{task_id}")
+async def delete_task(topic_id: int, task_id: int):
+    async with async_session() as session:
+        task = await session.get(Task, task_id)
+        if not task or task.topic_id != topic_id:
+            raise HTTPException(status_code=404, detail="Задание не найдено")
+
+        assigned = (await session.execute(
+            select(func.count()).select_from(DailyAssignment).where(
+                DailyAssignment.task_id == task_id
+            )
+        )).scalar() or 0
+        completed = (await session.execute(
+            select(func.count()).select_from(CompletedTask).where(
+                CompletedTask.task_id == task_id
+            )
+        )).scalar() or 0
+        if assigned or completed:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Задание уже выдавалось ученикам "
+                    f"({assigned} выдач, {completed} решений). "
+                    "Удалить нельзя, чтобы не потерять прогресс."
+                ),
+            )
+
+        await session.delete(task)
+        await session.commit()
+        return {"ok": True, "task_id": task_id}
+
+
+@router.delete("/topics/{topic_id}")
+async def delete_topic(topic_id: int):
+    async with async_session() as session:
+        topic = await _get_topic(session, topic_id)
+
+        tasks_count = (await session.execute(
+            select(func.count()).select_from(Task).where(
+                Task.topic_id == topic_id
+            )
+        )).scalar() or 0
+        users_count = (await session.execute(
+            select(func.count()).select_from(User).where(
+                User.current_topic_id == topic_id
+            )
+        )).scalar() or 0
+        lessons_count = (await session.execute(
+            select(func.count()).select_from(LessonSession).where(
+                LessonSession.topic_id == topic_id
+            )
+        )).scalar() or 0
+        boss_count = (await session.execute(
+            select(func.count()).select_from(BossFight).where(
+                BossFight.topic_id == topic_id
+            )
+        )).scalar() or 0
+        progress_count = (await session.execute(
+            select(func.count()).select_from(TopicProgress).where(
+                TopicProgress.topic_id == topic_id
+            )
+        )).scalar() or 0
+        required_count = (await session.execute(
+            select(func.count()).select_from(Topic).where(
+                Topic.required_topic_id == topic_id
+            )
+        )).scalar() or 0
+
+        if tasks_count:
+            raise HTTPException(
+                status_code=409,
+                detail=f"В теме ещё {tasks_count} заданий. Сначала удали их.",
+            )
+        if users_count or lessons_count or boss_count or progress_count:
+            raise HTTPException(
+                status_code=409,
+                detail="Тема уже использовалась учениками, удалить нельзя.",
+            )
+        if required_count:
+            raise HTTPException(
+                status_code=409,
+                detail="На эту тему ссылаются другие темы.",
+            )
+
+        await session.delete(topic)
+        await session.commit()
+        return {"ok": True, "topic_id": topic_id}
+
+
 # ─────────────────────────── Проверка ответов ───────────────────────────
 
 @router.get("/reviews")
 async def reviews(
     kind: Literal["all", "pending", "wrong"] = "pending",
     student_id: int | None = None,
-    limit: int = Query(50, ge=1, le=200),
+    page: int = Query(0, ge=0),
+    per_page: int = Query(30, ge=1, le=200),
 ):
     async with async_session() as session:
         q = (
@@ -682,15 +1168,25 @@ async def reviews(
             ))
         if student_id is not None:
             q = q.where(DailyAssignment.user_id == student_id)
+
+        total = (await session.execute(
+            select(func.count()).select_from(q.subquery())
+        )).scalar() or 0
+        pages = max(1, (total + per_page - 1) // per_page)
+        page = max(0, min(page, pages - 1))
         rows = (await session.execute(
-            q.order_by(desc(DailyAssignment.answered_at)).limit(limit)
+            q.order_by(desc(DailyAssignment.answered_at))
+            .offset(page * per_page)
+            .limit(per_page)
         )).all()
     return {
         "items": [
             _review_payload(assignment, user, task)
             for assignment, user, task in rows
         ],
-        "total": len(rows),
+        "total": total,
+        "page": page,
+        "pages": pages,
     }
 
 
@@ -804,3 +1300,124 @@ async def import_tasks(body: ImportIn):
 async def seed_data():
     stats = await seed_missing(force=True)
     return stats
+
+
+# ─────────────────────────── Экспорт CSV ───────────────────────────
+
+def _csv_safe(value) -> str:
+    text = "" if value is None else str(value)
+    if text[:1] in ("=", "+", "-", "@"):
+        return "'" + text
+    return text
+
+
+def _csv_response(filename: str, header: list[str], rows: list[list]) -> Response:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, delimiter=";")
+    writer.writerow(header)
+    writer.writerows(rows)
+    # BOM, чтобы Excel в Windows правильно открыл кириллицу.
+    content = "\ufeff" + buffer.getvalue()
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
+@router.get("/export/students.csv")
+async def export_students():
+    today = local_today()
+    async with async_session() as session:
+        q = select(User).where(User.role == "student")
+        if ADMIN_IDS:
+            q = q.where(User.id.notin_(ADMIN_IDS))
+        users = list((await session.execute(
+            q.order_by(User.username)
+        )).scalars().all())
+
+        topic_rows = (await session.execute(
+            select(Topic.id, Topic.title)
+        )).all()
+        topics = {tid: title for tid, title in topic_rows}
+        metrics = await _student_metrics(session, today)
+        today_metrics = await _today_metrics(session, today)
+
+    students_rows = [
+        _student_from_rows(user, topics, metrics, today_metrics)
+        for user in users
+    ]
+
+    header = [
+        "id", "username", "level", "rank", "xp", "coins", "streak",
+        "topic", "difficulty", "correct", "wrong", "pending", "debt",
+        "today_total", "today_completed", "last_activity",
+    ]
+    rows = [
+        [
+            s["id"],
+            _csv_safe(s["username"]),
+            s["level"],
+            _csv_safe(s["rank"]),
+            s["xp"],
+            s["coins"],
+            s["streak"],
+            _csv_safe(s["topic_title"]),
+            s["difficulty"],
+            s["correct"],
+            s["wrong"],
+            s["pending"],
+            s["debt"],
+            s["today_total"],
+            s["today_completed"],
+            _csv_safe(s["last_activity"]),
+        ]
+        for s in students_rows
+    ]
+    return _csv_response("students.csv", header, rows)
+
+
+@router.get("/export/reviews.csv")
+async def export_reviews(
+    kind: Literal["all", "pending", "wrong"] = "all",
+):
+    async with async_session() as session:
+        q = (
+            select(DailyAssignment, User, Task)
+            .join(User, User.id == DailyAssignment.user_id)
+            .join(Task, Task.id == DailyAssignment.task_id)
+            .where(DailyAssignment.is_completed.is_(True))
+        )
+        if kind == "pending":
+            q = q.where(DailyAssignment.is_correct.is_(None))
+        elif kind == "wrong":
+            q = q.where(DailyAssignment.is_correct.is_(False))
+        rows = (await session.execute(
+            q.order_by(desc(DailyAssignment.answered_at)).limit(5000)
+        )).all()
+
+    header = [
+        "id", "student_id", "username", "assigned_date", "answered_at",
+        "status", "difficulty", "task", "student_answer", "correct_answer",
+    ]
+    data = [
+        [
+            assignment.id,
+            user.id,
+            _csv_safe(user.username),
+            assignment.assigned_date.isoformat(),
+            _csv_safe(
+                assignment.answered_at.isoformat()
+                if assignment.answered_at else None
+            ),
+            _status(assignment),
+            task.difficulty,
+            _csv_safe(task.text),
+            _csv_safe(assignment.student_answer),
+            _csv_safe(task.answer),
+        ]
+        for assignment, user, task in rows
+    ]
+    return _csv_response("reviews.csv", header, data)

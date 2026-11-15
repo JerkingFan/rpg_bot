@@ -21,8 +21,11 @@
     error: null,
     teacher: {
       section: "overview",
-      overview: null,
+      dashboard: null,
       students: [],
+      studentQuery: "",
+      studentFilter: "all",
+      studentSort: "xp",
       topics: [],
       allTopics: [],
       topicPage: 0,
@@ -31,9 +34,13 @@
       topicQuery: "",
       reviews: [],
       reviewKind: "pending",
+      reviewPage: 0,
+      reviewPages: 1,
+      reviewTotal: 0,
       loading: false,
       loaded: false,
       modal: null,
+      lastUpdated: null,
     },
   };
 
@@ -525,9 +532,9 @@
   }
 
   function teacherNavHtml() {
-    const pending = state.teacher.overview?.pending_review;
+    const pending = state.teacher.dashboard?.pending_review;
     const items = [
-      ["overview", "📊 Обзор"],
+      ["overview", "📊 Табло"],
       ["reviews", `📨 Проверка${pending ? ` (${pending})` : ""}`],
       ["students", "👨‍🎓 Ученики"],
       ["topics", "📚 Темы"],
@@ -562,61 +569,201 @@
     return `${teacherNavHtml()}${body}`;
   }
 
+  function teacherStatusChip(status) {
+    const map = {
+      done: '<span class="teacher-tag good">✅ закрыл</span>',
+      partial: '<span class="teacher-tag warn">🟡 частично</span>',
+      none: '<span class="teacher-tag bad">⏳ не начинал</span>',
+      no_tasks: '<span class="teacher-tag">— нет заданий</span>',
+    };
+    return map[status] || map.no_tasks;
+  }
+
+  function teacherName(student) {
+    return student.username ? "@" + student.username : "id:" + student.id;
+  }
+
+  function teacherBoardRow(student) {
+    return `
+      <button class="teacher-row" data-action="teacher-student" data-id="${student.id}">
+        <div class="ico">${student.level >= 5 ? "🧙" : "👤"}</div>
+        <div class="grow">
+          <b>${esc(teacherName(student))}</b>
+          <small>${esc(student.topic_title || "тема не назначена")} · ${esc(difficultyLabel(student.difficulty))}</small>
+          <small>${student.today_completed}/${student.today_total} сегодня${student.debt ? ` · долг ${student.debt}` : ""}${student.pending ? ` · проверка ${student.pending}` : ""}</small>
+        </div>
+        <div class="right">${teacherStatusChip(student.status)}<small>Lv.${student.level} · ${student.xp} XP</small></div>
+      </button>
+    `;
+  }
+
+  function teacherWeekHtml(week) {
+    if (!week || !week.length) return "";
+    const max = Math.max(1, ...week.map((day) => day.assigned));
+    const names = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+    return `
+      <div class="chart">
+        ${week.map((day) => {
+          const date = new Date(day.date + "T00:00:00");
+          const height = Math.round((day.completed / max) * 100);
+          return `
+            <div class="chart-col" title="${esc(day.date)}: выдано ${day.assigned}, закрыто ${day.completed}">
+              <div class="chart-bar"><i style="height:${day.completed ? Math.max(height, 6) : 0}%"></i></div>
+              <b>${day.completed}</b>
+              <span>${names[date.getDay()]}</span>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+  }
+
+  function teacherTopHtml(items) {
+    if (!items || !items.length) {
+      return `<div class="teacher-hint">Пока нет данных за сегодня.</div>`;
+    }
+    const medals = ["🥇", "🥈", "🥉"];
+    return items.map((student, index) => `
+      <button class="teacher-row" data-action="teacher-student" data-id="${student.id}">
+        <div class="ico">${medals[index] || "🏅"}</div>
+        <div class="grow">
+          <b>${esc(teacherName(student))}</b>
+          <small>${student.today_completed}/${student.today_total} сегодня · ${student.streak} 🔥</small>
+        </div>
+        <div class="right"><b>+${student.daily_xp} XP</b><small>${student.xp} всего</small></div>
+      </button>
+    `).join("");
+  }
+
+  function teacherWeakHtml(items) {
+    if (!items || !items.length) {
+      return `<div class="teacher-hint">Ошибок пока нет — отлично.</div>`;
+    }
+    return items.map((topic) => `
+      <button class="teacher-row" data-action="teacher-topic" data-id="${topic.id}">
+        <div class="ico">📉</div>
+        <div class="grow">
+          <b>${esc(topic.title)}</b>
+          <small>верно ${topic.correct} · ошибок ${topic.wrong}</small>
+        </div>
+        <div class="right"><span class="teacher-tag bad">${topic.wrong}</span></div>
+      </button>
+    `).join("");
+  }
+
+  function teacherRecentHtml(items) {
+    if (!items || !items.length) {
+      return `<div class="teacher-hint">Пока нет ответов.</div>`;
+    }
+    return items.map((item) => `
+      <button class="teacher-row" data-action="teacher-review" data-id="${item.id}">
+        <div class="ico">${item.status === "review" ? "📨" : item.status === "wrong" ? "❌" : "✅"}</div>
+        <div class="grow">
+          <b>${esc(item.username ? "@" + item.username : "id:" + item.student_id)}</b>
+          <small>${esc((item.task_text || "").slice(0, 80))}</small>
+        </div>
+        <div class="right"><small>${item.answered_at ? esc(item.answered_at.slice(11, 16)) : "—"}</small></div>
+      </button>
+    `).join("");
+  }
+
   function teacherOverviewHtml() {
-    const o = state.teacher.overview;
+    const o = state.teacher.dashboard;
     if (!o) return `<div class="skeleton" style="height:120px"></div><div class="skeleton"></div>`;
     const active = o.active_topic;
+    const top = o.board.slice(0, 12);
+    const updated = state.teacher.lastUpdated
+      ? `<span class="muted small">${esc(state.teacher.lastUpdated)}</span>`
+      : "";
     return `
-      <div class="section-title">Учительская <span class="link" data-action="teacher-refresh">обновить</span></div>
+      <div class="section-title">Табло класса <span class="link" data-action="teacher-refresh">обновить</span> ${updated}</div>
       <div class="teacher-stats">
         ${teacherStat("учеников", o.students)}
+        ${teacherStat("активны сегодня", o.active_today, o.active_today ? "good" : "")}
         ${teacherStat("на проверке", o.pending_review, o.pending_review ? "warn" : "")}
+        ${teacherStat("долг", o.debt_total, o.debt_total ? "bad" : "")}
         ${teacherStat("ошибок", o.wrong_total, o.wrong_total ? "bad" : "")}
-        ${teacherStat("заданий в базе", o.tasks)}
+        ${teacherStat("заданий", o.tasks)}
       </div>
       <div class="card">
-        <div class="xp-line"><span>Сегодня закрыто</span><span>${o.today_completed} / ${o.today_total}</span></div>
+        <div class="xp-line"><span>Закрыто сегодня</span><span>${o.today_completed} / ${o.today_total}</span></div>
         <div class="bar ${o.today_total && o.today_completed >= o.today_total ? "good" : ""}"><i style="width:${pct(o.today_completed, o.today_total || 1)}%"></i></div>
+        <div class="xp-line mt8"><span>Верно · ошибки · на проверке</span><span>${o.today_correct} · ${o.today_wrong} · ${o.today_pending}</span></div>
       </div>
       <div class="teacher-card mt12">
         <h3>${active ? "✅ Активная тема" : "Активная тема не выбрана"}</h3>
         <p>${active ? esc(active.title) : "Выбери тему во вкладке «Темы»."}</p>
       </div>
-      <div class="section-title">Быстрые действия</div>
-      <div class="grid-2">
-        <button class="btn btn-primary" data-action="teacher-section" data-section="reviews">📨 Проверить ответы</button>
-        <button class="btn btn-soft" data-action="teacher-section" data-section="students">👨‍🎓 Ученики</button>
-        <button class="btn btn-soft" data-action="teacher-section" data-section="topics">📚 Темы</button>
-        <button class="btn btn-soft" data-action="teacher-assign-all">📤 Выдать задания всем</button>
-      </div>
-      <div class="section-title">База</div>
-      <div class="grid-2">
-        <button class="btn btn-ghost" data-action="teacher-import">📥 Импорт заданий</button>
-        <button class="btn btn-ghost" data-action="teacher-seed">🌱 Дополнить базу</button>
-      </div>
-      <div class="teacher-hint mt12">Импорт и наполнение базы только добавляют недостающие темы и задания. Существующие ученики, ответы и прогресс не затрагиваются.</div>
-    `;
-  }
-
-  function teacherStudentsHtml() {
-    const items = state.teacher.students;
-    return `
-      <div class="section-title">Ученики <span class="muted small">${items.length}</span></div>
-      ${items.length ? items.map((student) => `
-        <button class="teacher-row" data-action="teacher-student" data-id="${student.id}">
-          <div class="ico">${student.level >= 5 ? "🧙" : "👤"}</div>
-          <div class="grow">
-            <b>${esc(student.username ? "@" + student.username : "id:" + student.id)}</b>
-            <small>${esc(student.topic_title || "тема не назначена")} · ${esc(difficultyLabel(student.difficulty))}</small>
-            <small>${student.today_completed}/${student.today_total} сегодня${student.debt ? ` · долг ${student.debt}` : ""}${student.pending ? ` · на проверке ${student.pending}` : ""}</small>
-          </div>
-          <div class="right"><b>Lv.${student.level}</b><small>${student.xp} XP</small></div>
-        </button>
-      `).join("") : `
+      <div class="section-title">Активность за 7 дней</div>
+      ${teacherWeekHtml(o.week)}
+      <div class="section-title">Табло класса <span class="muted small">${o.board.length}</span></div>
+      ${top.length ? top.map(teacherBoardRow).join("") : `
         <div class="empty">
           <div class="emoji">👨‍🎓</div>
           <h3>Учеников пока нет</h3>
           <p>Они появятся здесь после /start в боте.</p>
+        </div>
+      `}
+      ${o.board.length > top.length ? `<button class="btn btn-soft btn-block mt8" data-action="teacher-section" data-section="students">Показать всех (${o.board.length})</button>` : ""}
+      <div class="section-title">Топ сегодня</div>
+      ${teacherTopHtml(o.top_students)}
+      <div class="section-title">Слабые темы</div>
+      ${teacherWeakHtml(o.weak_topics)}
+      <div class="section-title">Последние ответы</div>
+      ${teacherRecentHtml(o.recent)}
+      <div class="section-title">Действия</div>
+      <div class="grid-2">
+        <button class="btn btn-primary" data-action="teacher-assign-all">📤 Выдать задания всем</button>
+        <button class="btn btn-soft" data-action="teacher-broadcast">📣 Рассылка</button>
+        <button class="btn btn-soft" data-action="teacher-import">📥 Импорт</button>
+        <button class="btn btn-soft" data-action="teacher-seed">🌱 Дополнить базу</button>
+        <button class="btn btn-ghost" data-action="teacher-export-students">⬇️ Ученики CSV</button>
+        <button class="btn btn-ghost" data-action="teacher-export-reviews">⬇️ Ответы CSV</button>
+      </div>
+      <div class="teacher-hint mt12">Табло обновляется само каждые 30 секунд. Импорт и наполнение только добавляют данные и не трогают прогресс.</div>
+    `;
+  }
+
+  function teacherStudentsHtml() {
+    const t = state.teacher;
+    const items = t.students;
+    const filters = [
+      ["all", "Все"],
+      ["today_open", "Не закрыли"],
+      ["debt", "Долг"],
+      ["pending", "На проверке"],
+      ["active_today", "Активные"],
+      ["inactive", "Не заходили"],
+    ];
+    const sorts = [
+      ["xp", "По XP"],
+      ["debt", "По долгу"],
+      ["pending", "По проверке"],
+      ["level", "По уровню"],
+      ["today", "По сегодня"],
+      ["name", "По имени"],
+    ];
+    return `
+      <div class="section-title">Ученики <span class="muted small">${items.length}</span></div>
+      <div class="teacher-toolbar">
+        <input class="input" id="teacher-student-query" placeholder="Поиск по имени или id…" value="${esc(t.studentQuery)}" autocomplete="off">
+        <button class="btn btn-soft" data-action="teacher-student-search">Найти</button>
+      </div>
+      <div class="filters">
+        ${filters.map(([code, label]) => `
+          <button class="filter ${t.studentFilter === code ? "active" : ""}" data-action="teacher-student-filter" data-filter="${code}">${label}</button>
+        `).join("")}
+      </div>
+      <div class="teacher-toolbar">
+        <select class="select" id="teacher-student-sort">
+          ${sorts.map(([code, label]) => `<option value="${code}" ${t.studentSort === code ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </div>
+      ${items.length ? items.map(teacherBoardRow).join("") : `
+        <div class="empty">
+          <div class="emoji">👨‍🎓</div>
+          <h3>Никого не найдено</h3>
+          <p>Измени фильтр или поиск.</p>
         </div>
       `}
     `;
@@ -664,7 +811,7 @@
       ["all", "Все"],
     ];
     return `
-      <div class="section-title">Проверка ответов</div>
+      <div class="section-title">Проверка ответов <span class="muted small">${t.reviewTotal}</span></div>
       <div class="segmented">
         ${kinds.map(([code, label]) => `
           <button class="${t.reviewKind === code ? "active" : ""}" data-action="teacher-review-kind" data-kind="${code}">${label}</button>
@@ -689,6 +836,7 @@
           <p>Ответы, которым нужна проверка, появятся тут.</p>
         </div>
       `}
+      ${teacherPager(t.reviewPage, t.reviewPages, "teacher-review-page")}
     `;
   }
 
@@ -704,31 +852,50 @@
     `;
   }
 
-  async function loadTeacherSection(section) {
+  async function loadTeacherSection(section, options = {}) {
     if (!state.me?.is_teacher) return;
     const t = state.teacher;
-    t.section = section || "overview";
-    t.loading = true;
-    render();
+    const target = section || "overview";
+    if (!options.silent) {
+      t.section = target;
+      t.loading = true;
+      render();
+    }
     try {
-      if (t.section === "overview") {
-        t.overview = await api("/api/teacher/overview");
-      } else if (t.section === "students") {
-        const data = await api("/api/teacher/students");
+      if (target === "overview") {
+        t.dashboard = await api("/api/teacher/dashboard");
+        t.lastUpdated = new Date().toLocaleTimeString("ru-RU", {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      } else if (target === "students") {
+        const params = new URLSearchParams({
+          query: t.studentQuery,
+          filter: t.studentFilter,
+          sort: t.studentSort,
+        });
+        const data = await api(`/api/teacher/students?${params.toString()}`);
         t.students = data.students || [];
-      } else if (t.section === "topics") {
+      } else if (target === "topics") {
         const data = await api(`/api/teacher/topics?query=${encodeURIComponent(t.topicQuery)}&page=${t.topicPage}&per_page=30`);
         t.topics = data.items || [];
         t.topicPage = data.page;
         t.topicPages = data.pages;
         t.topicTotal = data.total;
-      } else if (t.section === "reviews") {
-        const data = await api(`/api/teacher/reviews?kind=${t.reviewKind}`);
+      } else if (target === "reviews") {
+        const data = await api(`/api/teacher/reviews?kind=${t.reviewKind}&page=${t.reviewPage}&per_page=30`);
         t.reviews = data.items || [];
+        t.reviewPage = data.page;
+        t.reviewPages = data.pages;
+        t.reviewTotal = data.total;
       }
       t.loaded = true;
     } catch (error) {
-      toast(error.message, "bad");
+      if (!options.silent) toast(error.message, "bad");
+    }
+    if (options.silent) {
+      if (state.tab === "teacher" && t.section === "overview") render();
+      return;
     }
     t.loading = false;
     if (state.tab === "teacher") render();
@@ -776,6 +943,7 @@
         <div class="xp-line mt8"><span>Сегодня</span><span>${student.today_completed} / ${student.today_total}</span></div>
         <div class="bar good"><i style="width:${pct(student.today_completed, student.today_total || 1)}%"></i></div>
         <div class="small muted mt8">Тема: ${esc(student.topic_title || "не назначена")}</div>
+        <div class="small muted">За сегодня: +${student.daily_xp} XP, +${student.daily_coins} 🪙</div>
       </div>
       <div class="section-title">Занятие</div>
       <div class="card teacher-form">
@@ -788,6 +956,8 @@
       <div class="grid-2 mt12">
         <button class="btn btn-soft" data-action="teacher-assign" data-id="${student.id}">📤 Выдать задания</button>
         <button class="btn btn-soft" data-action="teacher-individual" data-id="${student.id}">✏️ Индивидуальное</button>
+        <button class="btn btn-soft" data-action="teacher-bonus-student" data-id="${student.id}">🎁 XP/монеты</button>
+        <button class="btn btn-soft" data-action="teacher-message" data-id="${student.id}">✉️ Написать</button>
       </div>
       <div class="section-title">Последние задания</div>
       ${recent.length ? recent.map((item) => `
@@ -819,7 +989,7 @@
         method: "POST",
         body: JSON.stringify({ topic_id: topicId, difficulty }),
       });
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       toast("Тема назначена", "good");
       haptic("success");
       await openTeacherStudent(id);
@@ -833,7 +1003,7 @@
     button.disabled = true;
     try {
       const result = await api(`/api/teacher/students/${id}/assign`, { method: "POST" });
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       toast(result.assigned ? `Выдано заданий: ${result.assigned}` : "На сегодня уже всё выдано", "good");
       haptic("success");
       await openTeacherStudent(id);
@@ -917,6 +1087,7 @@
         ${topic.is_active
           ? '<button class="btn btn-good" disabled>✅ Активная тема</button>'
           : `<button class="btn btn-soft" data-action="teacher-topic-activate" data-id="${topic.id}">Сделать активной</button>`}
+        <button class="btn btn-ghost btn-sm" data-action="teacher-delete-topic" data-id="${topic.id}">🗑 Удалить тему</button>
       </div>
       <div class="section-title">Добавить задание</div>
       <div class="teacher-form">
@@ -931,9 +1102,15 @@
       <div class="section-title">Задания темы</div>
       ${page.items.length ? page.items.map((task) => `
         <div class="teacher-task-row">
-          <b>#${task.id}</b>
-          <span class="teacher-tag">${esc(difficultyLabel(task.difficulty))}</span>
-          ${task.target_user_id ? '<span class="teacher-tag warn">индивидуальное</span>' : ""}
+          <div class="task-head">
+            <b>#${task.id}</b>
+            <span class="teacher-tag">${esc(difficultyLabel(task.difficulty))}</span>
+            ${task.target_user_id ? '<span class="teacher-tag warn">индивидуальное</span>' : ""}
+            <span class="task-actions">
+              <button class="icon-btn" title="Редактировать" data-action="teacher-edit-task" data-id="${topic.id}" data-task="${task.id}">✏️</button>
+              <button class="icon-btn" title="Удалить" data-action="teacher-delete-task" data-id="${topic.id}" data-task="${task.id}">🗑</button>
+            </span>
+          </div>
           <div class="txt">${esc(task.text)}</div>
           ${task.answer ? `<div class="ans">Ответ: ${esc(task.answer)}</div>` : '<div class="small muted mt8">Без эталона — уйдёт на проверку</div>'}
         </div>
@@ -948,7 +1125,7 @@
     button.disabled = true;
     try {
       await api(`/api/teacher/topics/${id}/activate`, { method: "POST" });
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       toast("Тема стала активной", "good");
       haptic("success");
       await loadTeacherSection("topics");
@@ -974,7 +1151,7 @@
         method: "POST",
         body: JSON.stringify({ text, answer: answer || null, difficulty }),
       });
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       toast("Задание добавлено", "good");
       haptic("success");
       await openTeacherTopic(id, currentPage);
@@ -1011,7 +1188,7 @@
         method: "POST",
         body: JSON.stringify({ title, activate }),
       });
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       toast("Тема создана", "good");
       haptic("success");
       closeModal();
@@ -1050,7 +1227,7 @@
         body: JSON.stringify({ content }),
       });
       toast(`Тем: ${stats.topics_created}, заданий: ${stats.tasks_added}`, "good");
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       closeModal();
       await loadTeacherSection("overview");
     } catch (error) {
@@ -1063,7 +1240,7 @@
     button.disabled = true;
     try {
       const stats = await api("/api/teacher/seed", { method: "POST" });
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       toast(`Добавлено тем: ${stats.topics_created}, заданий: ${stats.tasks_added}`, "good");
       await loadTeacherSection(state.teacher.section);
     } catch (error) {
@@ -1077,7 +1254,7 @@
     button.disabled = true;
     try {
       const result = await api("/api/teacher/assign-all", { method: "POST" });
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       toast(`Выдано: ${result.sent} из ${result.total}${result.errors ? `, ошибок: ${result.errors}` : ""}`, result.errors ? "bad" : "good");
       await loadTeacherSection("overview");
     } catch (error) {
@@ -1148,7 +1325,7 @@
       const result = await api(`/api/teacher/reviews/${id}/accept`, { method: "POST" });
       toast(`Засчитано: +${result.reward.xp} XP, +${result.reward.coins} 🪙`, "good");
       haptic("success");
-      state.teacher.overview = null;
+      state.teacher.dashboard = null;
       closeModal();
       await loadTeacherSection("reviews");
     } catch (error) {
@@ -1169,6 +1346,321 @@
       toast(error.message, "bad");
       button.disabled = false;
     }
+  }
+
+  // ── Награды, сообщения и рассылка ──
+
+  function confirmAction(message) {
+    try {
+      if (tg?.initData && tg?.showConfirm) {
+        return new Promise((resolve) => {
+          tg.showConfirm(message, (ok) => resolve(Boolean(ok)));
+        });
+      }
+    } catch (_) {}
+    return Promise.resolve(window.confirm(message));
+  }
+
+  function teacherFindStudent(id) {
+    const t = state.teacher;
+    const list = [...(t.dashboard?.board || []), ...t.students];
+    return list.find((student) => student.id === id) || null;
+  }
+
+  function teacherStudentLabel(id) {
+    const modalStudent = state.teacher.modal?.detail?.student;
+    const student = modalStudent?.id === id ? modalStudent : teacherFindStudent(id);
+    return student?.username ? "@" + student.username : "id:" + id;
+  }
+
+  function openTeacherBonus(studentId) {
+    const label = teacherStudentLabel(studentId);
+    state.teacher.modal = { type: "bonus", studentId };
+    modalCard.innerHTML = `
+      ${teacherModalHead("🎁 Награда", label)}
+      <div class="teacher-form">
+        <label>XP</label>
+        <input class="input" id="teacher-bonus-xp" type="number" min="0" step="1" value="10" inputmode="numeric">
+        <label>Монеты</label>
+        <input class="input" id="teacher-bonus-coins" type="number" min="0" step="1" value="0" inputmode="numeric">
+        <label>Комментарий (необязательно)</label>
+        <input class="input" id="teacher-bonus-comment" placeholder="За что награда" autocomplete="off">
+        <button class="btn btn-primary" data-action="teacher-bonus-submit" data-id="${studentId}">Начислить</button>
+      </div>
+      <div class="teacher-hint mt12">Награда не создаёт выполненных заданий и не влияет на достижения. Ученик получит сообщение в боте.</div>
+    `;
+    showModal();
+  }
+
+  async function submitTeacherBonus(studentId, button) {
+    const xp = Number(document.getElementById("teacher-bonus-xp")?.value || 0);
+    const coins = Number(document.getElementById("teacher-bonus-coins")?.value || 0);
+    const comment = document.getElementById("teacher-bonus-comment")?.value.trim() || "";
+    if (!Number.isFinite(xp) || !Number.isFinite(coins) || (xp <= 0 && coins <= 0)) {
+      toast("Укажи XP или монеты", "bad");
+      return;
+    }
+    button.disabled = true;
+    try {
+      const result = await api(`/api/teacher/students/${studentId}/bonus`, {
+        method: "POST",
+        body: JSON.stringify({
+          xp: Math.max(0, Math.round(xp)),
+          coins: Math.max(0, Math.round(coins)),
+          comment: comment || null,
+        }),
+      });
+      toast(`Начислено: +${result.xp} XP, +${result.coins} 🪙`, "good");
+      haptic("success");
+      state.teacher.dashboard = null;
+      await openTeacherStudent(studentId);
+    } catch (error) {
+      toast(error.message, "bad");
+      button.disabled = false;
+    }
+  }
+
+  function openTeacherMessage(studentId) {
+    const label = teacherStudentLabel(studentId);
+    state.teacher.modal = { type: "message", studentId };
+    modalCard.innerHTML = `
+      ${teacherModalHead("✉️ Сообщение", label)}
+      <div class="teacher-form">
+        <label>Текст</label>
+        <textarea class="textarea" id="teacher-message-text" placeholder="Например: Ты хорошо поработал сегодня, но повтори дроби"></textarea>
+        <button class="btn btn-primary" data-action="teacher-message-submit" data-id="${studentId}">Отправить</button>
+      </div>
+      <div class="teacher-hint mt12">Сообщение придёт ученику в бот от имени бота.</div>
+    `;
+    showModal();
+  }
+
+  async function submitTeacherMessage(studentId, button) {
+    const text = document.getElementById("teacher-message-text")?.value.trim() || "";
+    if (!text) {
+      toast("Напиши текст сообщения", "bad");
+      return;
+    }
+    button.disabled = true;
+    try {
+      const result = await api(`/api/teacher/students/${studentId}/message`, {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      });
+      toast(result.notified ? "Сообщение отправлено" : "Сохранено, но бот недоступен", result.notified ? "good" : "bad");
+      haptic("success");
+      await openTeacherStudent(studentId);
+    } catch (error) {
+      toast(error.message, "bad");
+      button.disabled = false;
+    }
+  }
+
+  function openTeacherBroadcast() {
+    state.teacher.modal = { type: "broadcast" };
+    modalCard.innerHTML = `
+      ${teacherModalHead("📣 Рассылка", "Сообщение ученикам в бот")}
+      <div class="teacher-form">
+        <label>Кому</label>
+        <select class="select" id="teacher-broadcast-audience">
+          <option value="all">Всем ученикам</option>
+          <option value="today_open">Кто не закрыл задания сегодня</option>
+          <option value="debt">У кого долг</option>
+          <option value="pending">У кого ответы на проверке</option>
+        </select>
+        <label>Текст</label>
+        <textarea class="textarea" id="teacher-broadcast-text" placeholder="Например: Завтра контрольная, повторите формулы"></textarea>
+        <button class="btn btn-primary" data-action="teacher-broadcast-submit">Отправить</button>
+      </div>
+      <div class="teacher-hint mt12">Рассылка уходит от имени бота. В локальном режиме без бота она не отправится.</div>
+    `;
+    showModal();
+  }
+
+  async function submitTeacherBroadcast(button) {
+    const text = document.getElementById("teacher-broadcast-text")?.value.trim() || "";
+    const audience = document.getElementById("teacher-broadcast-audience")?.value || "all";
+    if (!text) {
+      toast("Напиши текст рассылки", "bad");
+      return;
+    }
+    button.disabled = true;
+    try {
+      const result = await api("/api/teacher/broadcast", {
+        method: "POST",
+        body: JSON.stringify({ text, audience }),
+      });
+      if (!result.notified) {
+        toast(`Получателей: ${result.total}. Бот недоступен, сообщения не отправлены`, "bad");
+      } else {
+        toast(`Отправлено: ${result.sent} из ${result.total}${result.errors ? `, ошибок: ${result.errors}` : ""}`, result.errors ? "bad" : "good");
+      }
+      haptic("success");
+      closeModal();
+    } catch (error) {
+      toast(error.message, "bad");
+      button.disabled = false;
+    }
+  }
+
+  // ── Экспорт CSV ──
+
+  async function downloadCsv(path, filename) {
+    try {
+      const response = await fetch(path, { headers: headers() });
+      if (!response.ok) {
+        let detail = "Не удалось скачать файл";
+        try {
+          detail = (await response.json()).detail || detail;
+        } catch (_) {}
+        throw new Error(detail);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toast("Файл скачан", "good");
+    } catch (error) {
+      toast(error.message, "bad");
+    }
+  }
+
+  // ── Редактирование и удаление заданий ──
+
+  function openTeacherTaskEdit(topicId, taskId) {
+    const data = state.teacher.modal?.data;
+    const task = (data?.items || []).find((item) => item.id === taskId);
+    if (!task) {
+      toast("Задание не найдено", "bad");
+      return;
+    }
+    state.teacher.modal = {
+      type: "task-edit",
+      topicId,
+      taskId,
+      page: data.page || 0,
+      task,
+    };
+    const difficulties = ["easy", "medium", "hard"].map((code) => `
+      <option value="${code}" ${code === task.difficulty ? "selected" : ""}>${esc(difficultyLabel(code))}</option>
+    `).join("");
+    modalCard.innerHTML = `
+      ${teacherModalHead("✏️ Задание #" + taskId, "Редактирование")}
+      <div class="teacher-form">
+        <label>Текст</label>
+        <textarea class="textarea" id="teacher-edit-text">${esc(task.text)}</textarea>
+        <label>Ответ (необязательно)</label>
+        <input class="input" id="teacher-edit-answer" value="${esc(task.answer || "")}" autocomplete="off">
+        <label>Сложность</label>
+        <select class="select" id="teacher-edit-difficulty">${difficulties}</select>
+        <button class="btn btn-primary" data-action="teacher-edit-task-submit" data-id="${topicId}" data-task="${taskId}">Сохранить</button>
+      </div>
+      <div class="teacher-hint mt12">Изменения увидят только те, кому задание выдадут после правки. Уже выданные ответы не меняются.</div>
+    `;
+    showModal();
+    renderMath(modalCard);
+  }
+
+  async function submitTeacherTaskEdit(topicId, taskId, button) {
+    const text = document.getElementById("teacher-edit-text")?.value.trim() || "";
+    const answer = document.getElementById("teacher-edit-answer")?.value.trim() || "";
+    const difficulty = document.getElementById("teacher-edit-difficulty")?.value || "medium";
+    if (!text) {
+      toast("Текст задания пустой", "bad");
+      return;
+    }
+    button.disabled = true;
+    try {
+      await api(`/api/teacher/topics/${topicId}/tasks/${taskId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ text, answer: answer || null, difficulty }),
+      });
+      const page = state.teacher.modal?.page || 0;
+      toast("Задание обновлено", "good");
+      haptic("success");
+      state.teacher.dashboard = null;
+      await openTeacherTopic(topicId, page);
+    } catch (error) {
+      toast(error.message, "bad");
+      button.disabled = false;
+    }
+  }
+
+  async function deleteTeacherTask(topicId, taskId, button) {
+    const ok = await confirmAction(`Удалить задание #${taskId}? Это действие нельзя отменить.`);
+    if (!ok) return;
+    button.disabled = true;
+    try {
+      const page = state.teacher.modal?.data?.page || 0;
+      await api(`/api/teacher/topics/${topicId}/tasks/${taskId}`, { method: "DELETE" });
+      toast("Задание удалено", "good");
+      haptic("success");
+      state.teacher.dashboard = null;
+      await openTeacherTopic(topicId, page);
+    } catch (error) {
+      toast(error.message, "bad");
+      button.disabled = false;
+    }
+  }
+
+  async function deleteTeacherTopic(topicId, button) {
+    const ok = await confirmAction("Удалить тему? Это можно сделать только для пустой темы, которая не использовалась учениками.");
+    if (!ok) return;
+    button.disabled = true;
+    try {
+      await api(`/api/teacher/topics/${topicId}`, { method: "DELETE" });
+      toast("Тема удалена", "good");
+      haptic("success");
+      state.teacher.dashboard = null;
+      closeModal();
+      state.teacher.topicPage = 0;
+      await loadTeacherSection("topics");
+    } catch (error) {
+      toast(error.message, "bad");
+      button.disabled = false;
+    }
+  }
+
+  // ── Фильтры и страницы ──
+
+  function changeStudentFilter(filter) {
+    state.teacher.studentFilter = filter;
+    loadTeacherSection("students");
+  }
+
+  function teacherStudentSearch() {
+    state.teacher.studentQuery = document.getElementById("teacher-student-query")?.value.trim() || "";
+    loadTeacherSection("students");
+  }
+
+  function changeStudentSort(sort) {
+    state.teacher.studentSort = sort;
+    loadTeacherSection("students");
+  }
+
+  function changeReviewPage(page) {
+    state.teacher.reviewPage = Math.max(0, page);
+    loadTeacherSection("reviews");
+  }
+
+  // ── Автообновление табло ──
+
+  let teacherTimer = null;
+
+  function startTeacherAutoRefresh() {
+    if (teacherTimer) return;
+    teacherTimer = setInterval(() => {
+      if (state.tab !== "teacher") return;
+      if (state.teacher.section !== "overview") return;
+      if (!modal.classList.contains("hidden")) return;
+      if (state.teacher.loading) return;
+      loadTeacherSection("overview", { silent: true });
+    }, 30_000);
   }
 
   // ─────────────────────────── Действия ───────────────────────────
@@ -1485,6 +1977,7 @@
     if (action === "teacher-assign-all") return assignAll(target);
     if (action === "teacher-import") return openTeacherImport();
     if (action === "teacher-seed") return seedTeacher(target);
+    if (action === "teacher-broadcast") return openTeacherBroadcast();
     if (action === "teacher-student") return openTeacherStudent(Number(target.dataset.id));
     if (action === "teacher-topic") return openTeacherTopic(Number(target.dataset.id));
     if (action === "teacher-topic-search") return teacherTopicSearch();
@@ -1492,6 +1985,11 @@
     if (action === "teacher-topic-page") return changeTopicPage(Number(target.dataset.page));
     if (action === "teacher-review-kind") return changeReviewKind(target.dataset.kind);
     if (action === "teacher-review") return openTeacherReview(Number(target.dataset.id));
+    if (action === "teacher-review-page") return changeReviewPage(Number(target.dataset.page));
+    if (action === "teacher-student-search") return teacherStudentSearch();
+    if (action === "teacher-student-filter") return changeStudentFilter(target.dataset.filter);
+    if (action === "teacher-export-students") return downloadCsv("/api/teacher/export/students.csv", "students.csv");
+    if (action === "teacher-export-reviews") return downloadCsv("/api/teacher/export/reviews.csv", "reviews.csv");
   }
 
   async function onModalClick(event) {
@@ -1508,8 +2006,17 @@
     if (action === "teacher-assign") return assignTeacherTasks(Number(target.dataset.id), target);
     if (action === "teacher-individual") return openTeacherIndividual(Number(target.dataset.id));
     if (action === "teacher-create-individual") return createTeacherIndividual(Number(target.dataset.id), target);
+    if (action === "teacher-bonus-student") return openTeacherBonus(Number(target.dataset.id));
+    if (action === "teacher-bonus-submit") return submitTeacherBonus(Number(target.dataset.id), target);
+    if (action === "teacher-message") return openTeacherMessage(Number(target.dataset.id));
+    if (action === "teacher-message-submit") return submitTeacherMessage(Number(target.dataset.id), target);
+    if (action === "teacher-broadcast-submit") return submitTeacherBroadcast(target);
     if (action === "teacher-topic-activate") return activateTeacherTopic(Number(target.dataset.id), target);
     if (action === "teacher-add-task") return addTeacherTask(Number(target.dataset.id), target);
+    if (action === "teacher-edit-task") return openTeacherTaskEdit(Number(target.dataset.id), Number(target.dataset.task));
+    if (action === "teacher-edit-task-submit") return submitTeacherTaskEdit(Number(target.dataset.id), Number(target.dataset.task), target);
+    if (action === "teacher-delete-task") return deleteTeacherTask(Number(target.dataset.id), Number(target.dataset.task), target);
+    if (action === "teacher-delete-topic") return deleteTeacherTopic(Number(target.dataset.id), target);
     if (action === "teacher-topic-tasks-page") return openTeacherTopic(Number(target.dataset.id), Number(target.dataset.page));
     if (action === "teacher-create-topic") return createTeacherTopic(target);
     if (action === "teacher-import-submit") return submitTeacherImport(target);
@@ -1525,11 +2032,22 @@
     if (list) list.innerHTML = mapRowsHtml(rows);
   }
 
+  function onViewChange(event) {
+    if (event.target.id === "teacher-student-sort") {
+      changeStudentSort(event.target.value);
+    }
+  }
+
   function onViewKeydown(event) {
     if (event.key !== "Enter") return;
     if (event.target.id === "teacher-topic-query") {
       event.preventDefault();
       teacherTopicSearch();
+      return;
+    }
+    if (event.target.id === "teacher-student-query") {
+      event.preventDefault();
+      teacherStudentSearch();
       return;
     }
     if (!event.target.matches(".answer-input")) return;
@@ -1554,6 +2072,12 @@
     } else if (id === "teacher-task-answer") {
       event.preventDefault();
       click('[data-action="teacher-add-task"]');
+    } else if (id === "teacher-edit-answer") {
+      event.preventDefault();
+      click('[data-action="teacher-edit-task-submit"]');
+    } else if (id === "teacher-bonus-comment") {
+      event.preventDefault();
+      click('[data-action="teacher-bonus-submit"]');
     }
   }
 
@@ -1570,9 +2094,11 @@
     });
     view.addEventListener("click", onViewClick);
     view.addEventListener("input", onViewInput);
+    view.addEventListener("change", onViewChange);
     view.addEventListener("keydown", onViewKeydown);
     modal.addEventListener("click", onModalClick);
     modal.addEventListener("keydown", onModalKeydown);
+    startTeacherAutoRefresh();
     await loadAll();
   }
 
